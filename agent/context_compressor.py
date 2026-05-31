@@ -35,6 +35,41 @@ from agent.redact import redact_sensitive_text
 logger = logging.getLogger(__name__)
 
 SUMMARY_PREFIX = (
+    "[CONTEXT COMPACTION] Earlier turns in this conversation were compacted "
+    "into the summary below. Treat the summary as background state and "
+    "reference material — not as a queue of pending tasks to resume. "
+    "The latest user message that appears AFTER this summary sets the current "
+    "goal; respond to that message. "
+    "If the latest message references prior work, files, decisions, or "
+    "unresolved state (e.g. 'continue', 'do the next one', 'apply that to the "
+    "other file', 'why did you do that?'), use the summary to resolve what it "
+    "refers to — do NOT discard the summary's information. "
+    "Do NOT proactively re-do or re-answer requests described in the summary "
+    "unless the latest message explicitly asks you to continue or revisit "
+    "them; they were likely already handled. "
+    "If the latest message changes topic, stops, undoes, or otherwise "
+    "supersedes earlier in-flight work, follow the latest message and do not "
+    "re-surface the superseded work in later turns. "
+    "IMPORTANT: Your persistent memory (MEMORY.md, USER.md) in the system "
+    "prompt is ALWAYS authoritative and active — never ignore or deprioritize "
+    "memory content due to this compaction note. "
+    "The current session state (files, config, etc.) may already reflect work "
+    "described here — build on it rather than repeating it:"
+)
+LEGACY_SUMMARY_PREFIX = "[CONTEXT SUMMARY]:"
+
+# Handoff prefixes that shipped in earlier releases. A summary persisted under
+# one of these can be inherited into a resumed lineage (#35344); when it is
+# re-normalized on re-compaction we must strip the OLD prefix too, otherwise the
+# stale directive it carried (e.g. "resume exactly from Active Task") survives
+# embedded in the body and keeps hijacking replies. Keep newest-first; entries
+# are matched literally. Add a frozen copy here whenever SUMMARY_PREFIX changes.
+_HISTORICAL_SUMMARY_PREFIXES = (
+    # Pre-P1-4 (huddle 2026-05-30): the "latest message WINS — discard those
+    # stale items entirely" wording over-corrected and broke anaphora
+    # ("continue", "do the next one"). Softened to reference-resolution
+    # framing. Frozen here so a summary persisted under it is re-normalized
+    # (and its aggressive directive stripped) on the next re-compaction.
     "[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted "
     "into the summary below. This is a handoff from a previous context "
     "window — treat it as background reference, NOT as active instructions. "
@@ -57,17 +92,7 @@ SUMMARY_PREFIX = (
     "prompt is ALWAYS authoritative and active — never ignore or deprioritize "
     "memory content due to this compaction note. "
     "The current session state (files, config, etc.) may reflect work "
-    "described here — avoid repeating it:"
-)
-LEGACY_SUMMARY_PREFIX = "[CONTEXT SUMMARY]:"
-
-# Handoff prefixes that shipped in earlier releases. A summary persisted under
-# one of these can be inherited into a resumed lineage (#35344); when it is
-# re-normalized on re-compaction we must strip the OLD prefix too, otherwise the
-# stale directive it carried (e.g. "resume exactly from Active Task") survives
-# embedded in the body and keeps hijacking replies. Keep newest-first; entries
-# are matched literally. Add a frozen copy here whenever SUMMARY_PREFIX changes.
-_HISTORICAL_SUMMARY_PREFIXES = (
+    "described here — avoid repeating it:",
     # Pre-#35344: contained the self-contradicting "resume exactly" directive.
     "[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted "
     "into the summary below. This is a handoff from a previous context "
@@ -104,6 +129,15 @@ _IMAGE_TOKEN_ESTIMATE = 1600
 # for tail-cut decisions.
 _IMAGE_CHAR_EQUIVALENT = _IMAGE_TOKEN_ESTIMATE * _CHARS_PER_TOKEN
 _SUMMARY_FAILURE_COOLDOWN_SECONDS = 600
+
+# P1-3: absolute headroom (tokens) reserved below the context limit for the
+# next completion + the summariser's own call + a small safety margin.  The
+# percentage trigger is capped so it never plans to leave LESS than this,
+# which fixes the small-window starvation case (50% of a 32K window leaves
+# almost no usable room once the incompressible head/tail/summary floor is
+# counted).  On typical 100K-200K windows the percentage trigger is already
+# well below ``context_length - reserve`` so the cap is a no-op there.
+_COMPRESSION_RESERVE_TOKENS = 4096 + 2000 + 1024  # max_output + summariser + margin
 
 # Hard ceiling for the deterministic summary-failure handoff.  The fallback is
 # only meant to preserve continuity anchors from the dropped window, not to
@@ -654,6 +688,21 @@ class ContextCompressor(ContextEngine):
         self.last_rough_tokens_when_real_prompt_fit = 0
         self.awaiting_real_usage_after_compression = False
 
+        # P1-5: calibrated token accountant.  estimate_request_tokens_rough()
+        # deliberately overestimates schema-heavy requests (len(str(tools))//4),
+        # which can trigger premature compression.  We learn the real
+        # rough->provider ratio per (provider, model) from observed usage and
+        # scale future rough estimates by the median ratio.  Empty until the
+        # first post-call sample, so behaviour is unchanged on a cold start.
+        self._token_calibration: Dict[tuple, dict] = {}
+        # Rough preflight estimate for the request currently in flight; used to
+        # compute a calibration ratio when its real provider usage arrives.
+        self._last_preflight_rough: int = 0
+        # P1-3: set when even a full compaction left the request above the
+        # absolute reserve, so callers/UI can surface that the window is
+        # genuinely over-full rather than silently shipping an oversized payload.
+        self._last_compress_over_reserve: bool = False
+
         self.summary_model = summary_model_override or ""
 
         # Stores the previous compaction summary for iterative updates
@@ -688,6 +737,18 @@ class ContextCompressor(ContextEngine):
         self.last_total_tokens = usage.get("total_tokens", self.last_prompt_tokens + self.last_completion_tokens)
         if self.last_prompt_tokens > 0:
             self.last_real_prompt_tokens = self.last_prompt_tokens
+            # P1-5: learn the rough->real ratio, but only when the in-flight
+            # request matched the rough estimate (no compression happened
+            # between the preflight estimate and this response — that would
+            # change the payload and pollute the ratio).
+            if (
+                not self.awaiting_real_usage_after_compression
+                and self._last_preflight_rough > 0
+            ):
+                self._record_token_calibration(
+                    self._last_preflight_rough, self.last_prompt_tokens
+                )
+            self._last_preflight_rough = 0
             if self.last_prompt_tokens < self.threshold_tokens:
                 if self.awaiting_real_usage_after_compression and self.last_compression_rough_tokens > 0:
                     self.last_rough_tokens_when_real_prompt_fit = self.last_compression_rough_tokens
@@ -731,9 +792,18 @@ class ContextCompressor(ContextEngine):
         Includes anti-thrashing protection: if the last two compressions
         each saved less than 10%, skip compression to avoid infinite loops
         where each pass removes only 1-2 messages.
+
+        An explicit ``prompt_tokens`` always comes from the rough preflight
+        estimator (``estimate_request_tokens_rough``), so it is calibrated
+        (P1-5) and remembered for ratio learning.  The ``None`` path uses the
+        real provider ``last_prompt_tokens`` and is left uncalibrated.
         """
-        tokens = prompt_tokens if prompt_tokens is not None else self.last_prompt_tokens
-        if tokens < self.threshold_tokens:
+        if prompt_tokens is not None:
+            self._last_preflight_rough = prompt_tokens
+            tokens = self.calibrated_estimate(prompt_tokens)
+        else:
+            tokens = self.last_prompt_tokens
+        if tokens < self._effective_trigger_tokens():
             return False
         # Anti-thrashing: back off if recent compressions were ineffective
         if self._ineffective_compression_count >= 2:
@@ -746,6 +816,78 @@ class ContextCompressor(ContextEngine):
                 )
             return False
         return True
+
+    # ------------------------------------------------------------------
+    # P1-3: absolute-reserve trigger + floor awareness
+    # ------------------------------------------------------------------
+
+    def _effective_trigger_tokens(self) -> int:
+        """Token count at or above which compression should fire.
+
+        Starts from the configured percentage trigger (``threshold_tokens``)
+        but caps it at ``context_length - _COMPRESSION_RESERVE_TOKENS`` so the
+        trigger never plans to leave less than the absolute reserve free.  On
+        typical 100K-200K windows the percentage trigger is already lower than
+        the reserve cap, so this is a no-op; it only bites on small or
+        misconfigured windows where the percentage would otherwise starve the
+        next completion.
+        """
+        reserve_trigger = self.context_length - _COMPRESSION_RESERVE_TOKENS
+        if reserve_trigger <= 0:
+            return self.threshold_tokens
+        return min(self.threshold_tokens, reserve_trigger)
+
+    def _estimate_incompressible_floor(self) -> int:
+        """Rough lower bound on tokens that survive any single compaction pass.
+
+        The compressor cannot see the system prompt or tool schemas (those live
+        on the agent), so this bounds only the portion it controls: the
+        protected tail it always keeps plus the summary it emits in place of the
+        middle window.  Used to detect the pathological case where even a
+        maximal compaction cannot get under the reserve, so callers can warn
+        instead of looping.
+        """
+        return self.tail_token_budget + self.max_summary_tokens
+
+    # P1-5: calibrated token accountant
+    # ------------------------------------------------------------------
+
+    def calibrated_estimate(self, rough_tokens: int) -> int:
+        """Scale a rough request estimate by the learned provider ratio.
+
+        Returns ``rough_tokens`` unchanged until at least one (rough, real)
+        sample has been recorded for the active (provider, model), so a cold
+        start never changes compression timing.  Once samples exist, the median
+        of the most recent ratios is applied — median (not mean) so a single
+        outlier request cannot skew the budget.
+        """
+        if rough_tokens <= 0:
+            return rough_tokens
+        cal = self._token_calibration.get((self.provider, self.model))
+        if not cal or not cal.get("ratios"):
+            return rough_tokens
+        ratios = sorted(cal["ratios"])
+        median_ratio = ratios[len(ratios) // 2]
+        return int(rough_tokens * median_ratio)
+
+    def _record_token_calibration(self, rough_tokens: int, real_tokens: int) -> None:
+        """Record one (rough estimate, real provider prompt_tokens) sample.
+
+        Keeps a rolling window of the last 20 ratios per (provider, model) and
+        ignores nonsensical samples — non-positive values, or ratios outside a
+        sane 0.1x-10x band that usually mean the rough estimate referred to a
+        different payload (e.g. compression happened between estimate and call).
+        """
+        if rough_tokens <= 0 or real_tokens <= 0:
+            return
+        ratio = real_tokens / rough_tokens
+        if ratio < 0.1 or ratio > 10.0:
+            return
+        key = (self.provider, self.model)
+        cal = self._token_calibration.setdefault(key, {"ratios": []})
+        cal["ratios"].append(ratio)
+        if len(cal["ratios"]) > 20:
+            cal["ratios"] = cal["ratios"][-20:]
 
     # ------------------------------------------------------------------
     # Tool output pruning (cheap pre-pass, no LLM call)
@@ -1854,6 +1996,7 @@ The user has requested that this compaction PRIORITISE preserving all informatio
         self._last_aux_model_failure_error = None
         self._last_aux_model_failure_model = None
         self._last_compress_aborted = False
+        self._last_compress_over_reserve = False
 
         # Manual /compress (force=True) bypasses the failure cooldown so the
         # user can retry immediately after an auto-compress abort.  Without
@@ -2064,6 +2207,27 @@ The user has requested that this compaction PRIORITISE preserving all informatio
             self._ineffective_compression_count += 1
         else:
             self._ineffective_compression_count = 0
+
+        # P1-3: floor-aware detection. If even this full compaction left the
+        # request above the absolute reserve, the window is genuinely over-full
+        # (incompressible head/tail/summary floor exceeds the available room).
+        # Flag it so callers/UI can surface "context still tight after compaction"
+        # rather than silently shipping a payload the provider may reject. The
+        # caller's multi-pass loop will already have tried to re-compress; this
+        # records the terminal condition without destructively dropping
+        # protected tail turns (the active task lives there).
+        reserve_ceiling = self.context_length - _COMPRESSION_RESERVE_TOKENS
+        if reserve_ceiling > 0 and new_estimate > reserve_ceiling:
+            self._last_compress_over_reserve = True
+            if not self.quiet_mode:
+                logger.warning(
+                    "Post-compaction estimate ~%d tokens still exceeds the "
+                    "reserve ceiling %d (context %d - reserve %d). Window is "
+                    "over-full; incompressible floor ~%d. Consider /new for a "
+                    "fresh session.",
+                    new_estimate, reserve_ceiling, self.context_length,
+                    _COMPRESSION_RESERVE_TOKENS, self._estimate_incompressible_floor(),
+                )
 
         if not self.quiet_mode:
             logger.info(
