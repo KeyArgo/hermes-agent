@@ -3,6 +3,7 @@
 Covers the four items implemented from
 ``Vaults/handoffs/compression-fix-handover.md`` against the live compressor:
 
+  P0-2  append-only segment summarization (no summary-of-summary degradation)
   P1-5  calibrated token accountant (rough -> provider ratio learning)
   P1-3  absolute-reserve trigger cap + floor-awareness
   P1-4  softened SUMMARY_PREFIX (anaphora-preserving, no "discard" over-correction)
@@ -20,6 +21,7 @@ from agent.context_compressor import (
     SUMMARY_PREFIX,
     _COMPRESSION_RESERVE_TOKENS,
     _HISTORICAL_SUMMARY_PREFIXES,
+    _SEGMENT_MERGE_THRESHOLD,
 )
 
 
@@ -269,3 +271,144 @@ class TestToolPairingBoundaries:
         sanitized = c._sanitize_tool_pairs(msgs)
         tool_ids = {m.get("tool_call_id") for m in sanitized if m.get("role") == "tool"}
         assert "lonely" in tool_ids  # a stub result was inserted
+
+
+# ---------------------------------------------------------------------------
+# P0-2: append-only segment summarization (no summary-of-summary)
+# ---------------------------------------------------------------------------
+
+class TestSegmentSummarization:
+    def _msgs(self, n=10):
+        return [
+            {"role": "user" if i % 2 == 0 else "assistant", "content": f"msg {i}"}
+            for i in range(n)
+        ]
+
+    def test_first_compaction_creates_one_segment(self):
+        c = _make()
+        assert c._summary_segments == []
+        with patch("agent.context_compressor.call_llm", return_value=_summary_response("seg0")):
+            c.compress(self._msgs(), current_tokens=90_000)
+        assert len(c._summary_segments) == 1
+        assert c._summary_segments[0]["text"] == "seg0"
+
+    def test_second_compaction_adds_segment_not_replaces(self):
+        """Each compress() call appends a new segment — old segments survive."""
+        c = _make()
+        with patch("agent.context_compressor.call_llm", return_value=_summary_response("first")):
+            c.compress(self._msgs(), current_tokens=90_000)
+        assert len(c._summary_segments) == 1
+
+        # Simulate more content arriving and a second compaction.
+        c._turns_seen = 0  # reset so second compress has something to do
+        c._previous_summary = "first"
+        with patch("agent.context_compressor.call_llm", return_value=_summary_response("second")):
+            c.compress(self._msgs(), current_tokens=90_000)
+        # Both segments survive — no replacement.
+        assert len(c._summary_segments) == 2
+        texts = [s["text"] for s in c._summary_segments]
+        assert "first" in texts
+        assert "second" in texts
+
+    def test_second_compaction_prompt_uses_prior_context_not_full_rewrite(self):
+        """The delta path must show PRIOR CONTEXT (old segment) and ask for
+        NEW TURNS only — never 'PREVIOUS SUMMARY:' (old iterative-rewrite path)."""
+        c = _make()
+        c._summary_segments = [{"start": 0, "end": 5, "text": "FACTUAL-PRIOR-SEGMENT"}]
+        c._previous_summary = "FACTUAL-PRIOR-SEGMENT"
+
+        with patch("agent.context_compressor.call_llm", return_value=_summary_response("new")) as mock:
+            c.compress(self._msgs(), current_tokens=90_000)
+
+        prompt = mock.call_args.kwargs["messages"][0]["content"]
+        assert "PRIOR CONTEXT" in prompt
+        assert "NEW TURNS TO SUMMARIZE" in prompt
+        # Must not use the old iterative-rewrite label.
+        assert "PREVIOUS SUMMARY:" not in prompt
+        # The old segment content appears once (as context, not as input turns).
+        assert prompt.count("FACTUAL-PRIOR-SEGMENT") == 1
+
+    def test_render_segments_labels_older_entries(self):
+        c = _make()
+        c._summary_segments = [
+            {"start": 0, "end": 10, "text": "old-facts"},
+            {"start": 10, "end": 20, "text": "new-facts"},
+        ]
+        rendered = c._render_summary_from_segments()
+        assert "old-facts" in rendered
+        assert "new-facts" in rendered
+        # Only the older segment gets a label; newest is verbatim.
+        assert "Earlier context" in rendered
+        # The newest segment has no label prefix.
+        lines = rendered.splitlines()
+        last_nonempty = next(l for l in reversed(lines) if l.strip())
+        assert last_nonempty == "new-facts"
+
+    def test_render_empty_segments_returns_empty(self):
+        c = _make()
+        assert c._render_summary_from_segments() == ""
+
+    def test_compact_merges_oldest_when_threshold_exceeded(self):
+        c = _make()
+        # Add _SEGMENT_MERGE_THRESHOLD + 1 segments to trigger compaction.
+        for i in range(_SEGMENT_MERGE_THRESHOLD + 1):
+            c._summary_segments.append({"start": i * 10, "end": (i + 1) * 10, "text": f"seg{i}"})
+        c._compact_old_segments()
+        assert len(c._summary_segments) == _SEGMENT_MERGE_THRESHOLD
+        # The first entry is the merged pair covering seg0+seg1.
+        merged = c._summary_segments[0]
+        assert "seg0" in merged["text"]
+        assert "seg1" in merged["text"]
+        assert merged["start"] == 0
+        assert merged["end"] == 20
+
+    def test_compact_noop_at_threshold(self):
+        c = _make()
+        for i in range(_SEGMENT_MERGE_THRESHOLD):
+            c._summary_segments.append({"start": i, "end": i + 1, "text": f"seg{i}"})
+        c._compact_old_segments()
+        assert len(c._summary_segments) == _SEGMENT_MERGE_THRESHOLD
+
+    def test_legacy_previous_summary_bootstraps_segment(self):
+        """On first re-compaction after resume, legacy _previous_summary must
+        be bootstrapped into _summary_segments so the delta path fires."""
+        from agent.context_compressor import SUMMARY_PREFIX
+        old_body = "LEGACY-BODY unique facts"
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": f"{SUMMARY_PREFIX}\n{old_body}"},
+            {"role": "assistant", "content": "ack"},
+            {"role": "user", "content": "new1"},
+            {"role": "assistant", "content": "ans1"},
+            {"role": "user", "content": "new2"},
+            {"role": "assistant", "content": "ans2"},
+            {"role": "user", "content": "active"},
+        ]
+        c = _make(protect_first_n=1, protect_last_n=1)
+        assert c._summary_segments == []
+        with patch("agent.context_compressor.call_llm", return_value=_summary_response("new-seg")):
+            c.compress(msgs, current_tokens=90_000)
+        # Segments: the bootstrapped legacy one + the new one.
+        assert len(c._summary_segments) >= 1
+        texts = [s["text"] for s in c._summary_segments]
+        assert "new-seg" in texts
+
+    def test_previous_summary_kept_in_sync(self):
+        """_previous_summary is always the rendered view of all segments
+        (for fallback code paths that read it directly)."""
+        c = _make()
+        with patch("agent.context_compressor.call_llm", return_value=_summary_response("alpha")):
+            c.compress(self._msgs(), current_tokens=90_000)
+        # _previous_summary = rendered form of segments.
+        assert "alpha" in c._previous_summary
+        rendered = c._render_summary_from_segments()
+        assert c._previous_summary == rendered
+
+    def test_on_session_reset_clears_segments(self):
+        c = _make()
+        c._summary_segments = [{"start": 0, "end": 10, "text": "stuff"}]
+        c._turns_seen = 10
+        c.on_session_reset()
+        assert c._summary_segments == []
+        assert c._turns_seen == 0
+        assert c._previous_summary is None

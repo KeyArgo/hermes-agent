@@ -130,6 +130,11 @@ _IMAGE_TOKEN_ESTIMATE = 1600
 _IMAGE_CHAR_EQUIVALENT = _IMAGE_TOKEN_ESTIMATE * _CHARS_PER_TOKEN
 _SUMMARY_FAILURE_COOLDOWN_SECONDS = 600
 
+# P0-2: max live summary segments before the two oldest are merged into one.
+# At 5 segments the merged-render is already ~4-5 paragraphs; merging keeps
+# the "previous context" injection token-bounded for very long sessions.
+_SEGMENT_MERGE_THRESHOLD: int = 5
+
 # P1-3: absolute headroom (tokens) reserved below the context limit for the
 # next completion + the summariser's own call + a small safety margin.  The
 # percentage trigger is capped so it never plans to leave LESS than this,
@@ -574,6 +579,8 @@ class ContextCompressor(ContextEngine):
         self._context_probed = False
         self._context_probe_persistable = False
         self._previous_summary = None
+        self._summary_segments = []
+        self._turns_seen = 0
         self._last_summary_error = None
         self._last_summary_dropped_count = 0
         self._last_summary_fallback_used = False
@@ -705,8 +712,25 @@ class ContextCompressor(ContextEngine):
 
         self.summary_model = summary_model_override or ""
 
-        # Stores the previous compaction summary for iterative updates
+        # Stores the previous compaction summary for iterative updates.
+        # Legacy field — kept for backward compat (resumed sessions that
+        # have an older persisted summary message but no _summary_segments yet).
+        # New code writes to _summary_segments instead.
         self._previous_summary: Optional[str] = None
+
+        # P0-2: append-only segment list.  Each entry is a dict:
+        #   {"start": int, "end": int, "text": str}
+        # where start/end are global turn-sequence numbers (monotone, never
+        # reset within a session) bounding the turns whose information lives
+        # in this segment.  Each turn is summarized EXACTLY ONCE — segments
+        # are never re-fed into the LLM.  The rendered view (injected into
+        # the assistant context at compress time) is assembled from ALL
+        # segments, with older ones condensed more aggressively.
+        self._summary_segments: List[Dict[str, Any]] = []
+        # Global turn counter — number of message-list positions that have
+        # passed through the compressor since session start.  Advanced once
+        # per compress() call by (compress_end - compress_start) new turns.
+        self._turns_seen: int = 0
         # Anti-thrashing: track whether last compression was effective
         self._last_compression_savings_pct: float = 100.0
         self._ineffective_compression_count: int = 0
@@ -1329,6 +1353,78 @@ Summary generation was unavailable, so this is a best-effort deterministic fallb
             summary = summary[: _FALLBACK_SUMMARY_MAX_CHARS - 42].rstrip() + "\n...[fallback summary truncated]"
         return summary
 
+    # ------------------------------------------------------------------
+    # P0-2: append-only segment helpers
+    # ------------------------------------------------------------------
+
+    def _render_summary_from_segments(self) -> str:
+        """Assemble a human-readable summary body from all live segments.
+
+        Older segments are rendered condensed (just their stored text, which
+        was already compact at the time it was written); newer segments are
+        rendered verbatim.  The assembler never re-summarizes — it only
+        concatenates.
+
+        Returns an empty string when there are no segments.
+        """
+        if not self._summary_segments:
+            return ""
+        parts = []
+        n = len(self._summary_segments)
+        for i, seg in enumerate(self._summary_segments):
+            text = (seg.get("text") or "").strip()
+            if not text:
+                continue
+            if i < n - 1:
+                # Older segment: label it so the model knows it's historical.
+                label = f"--- Earlier context (turns {seg['start']+1}-{seg['end']}) ---"
+                parts.append(f"{label}\n{text}")
+            else:
+                # Newest segment: no label, render verbatim.
+                parts.append(text)
+        return "\n\n".join(parts)
+
+    def _compact_old_segments(self) -> None:
+        """Merge the two oldest segments into one when the list is too long.
+
+        Merging is purely text concatenation — NO LLM call.  The merged
+        segment covers the union of the two input turn ranges and contains
+        both bodies separated by a blank line.  This keeps token growth
+        bounded without any re-summarization degradation.
+        """
+        if not hasattr(self, "_summary_segments") or len(self._summary_segments) <= _SEGMENT_MERGE_THRESHOLD:
+            return
+        a = self._summary_segments[0]
+        b = self._summary_segments[1]
+        merged_text = (a.get("text") or "").strip() + "\n\n" + (b.get("text") or "").strip()
+        merged = {"start": a["start"], "end": b["end"], "text": merged_text}
+        self._summary_segments = [merged] + self._summary_segments[2:]
+        if not self.quiet_mode:
+            logger.debug(
+                "Compacted oldest two summary segments into one "
+                "(turns %d-%d + %d-%d → %d-%d)",
+                a["start"], a["end"], b["start"], b["end"],
+                merged["start"], merged["end"],
+            )
+
+    def _context_for_new_turns(self) -> str:
+        """Build the 'previous context' injection for a delta-summarization call.
+
+        Returns a compact rendition of all prior segments: enough for the LLM
+        to understand what has already been recorded (so it can avoid
+        duplication and can handle forward-references), but NOT the full text
+        (that would recreate the summary-of-summary problem).
+
+        When there are no segments yet (first compaction) or the legacy
+        _previous_summary path is active, returns that prose summary.
+        """
+        segments = getattr(self, "_summary_segments", None)
+        if segments:
+            return self._render_summary_from_segments()
+        if self._previous_summary:
+            return self._previous_summary
+        return ""
+
     def _fallback_to_main_for_compression(self, e: Exception, reason: str) -> None:
         """Switch from a separate ``summary_model`` back to the main model.
 
@@ -1482,19 +1578,31 @@ Target ~{summary_budget} tokens. Be CONCRETE — include file paths, command out
 
 Write only the summary body. Do not include any preamble or prefix."""
 
-        if self._previous_summary:
-            # Iterative update: preserve existing info, add new progress
+        prior_context = self._context_for_new_turns()
+        if prior_context:
+            # P0-2 delta path: summarize ONLY the new turns.  The prior
+            # context is shown read-only so the LLM can avoid duplication
+            # and handle forward-references; it is NOT rewritten.  The new
+            # segment text will be appended to _summary_segments, never
+            # merged back through the LLM.
             prompt = f"""{_summarizer_preamble}
 
-You are updating a context compaction summary. A previous compaction produced the summary below. New conversation turns have occurred since then and need to be incorporated.
+You are writing a NEW summary segment covering only the turns listed below.
+Earlier turns were already summarized and are shown as PRIOR CONTEXT — do NOT
+re-summarize, rewrite, or copy from them. Your output covers ONLY the NEW TURNS.
 
-PREVIOUS SUMMARY:
-{self._previous_summary}
+PRIOR CONTEXT (already recorded, do not repeat):
+{prior_context}
 
-NEW TURNS TO INCORPORATE:
+NEW TURNS TO SUMMARIZE (these are the only turns your output should cover):
 {content_to_summarize}
 
-Update the summary using this exact structure. PRESERVE all existing information that is still relevant. ADD new completed actions to the numbered list (continue numbering). Move items from "In Progress" to "Completed Actions" when done. Move answered questions to "Resolved Questions". Update "Active State" to reflect current state. Remove information only if it is clearly obsolete. CRITICAL: Update "## Active Task" to reflect the user's most recent unfulfilled input — this includes any question, decision request, or discussion turn that the assistant has not yet answered. Only write "None" if the last exchange was fully resolved.
+Write a structured summary of the NEW TURNS ONLY, using this exact structure.
+Do not copy or paraphrase information from the prior context unless it is
+directly modified or superseded by the new turns.
+CRITICAL: "## Active Task" must reflect the user's most recent unfulfilled input
+from the NEW TURNS — only fall back to the prior context's task if the new turns
+contain no user messages.
 
 {_template_sections}"""
         else:
@@ -1542,12 +1650,27 @@ The user has requested that this compaction PRIORITISE preserving all informatio
             # Redact the summary output as well — the summarizer LLM may
             # ignore prompt instructions and echo back secrets verbatim.
             summary = redact_sensitive_text(content.strip())
-            # Store for iterative updates on next compaction
+            # P0-2: record as a new append-only segment keyed to the turn
+            # range that was just summarized.  The segment text is the raw
+            # LLM output (no prefix); the injected form is rendered by
+            # _render_summary_from_segments() + _with_summary_prefix().
+            if hasattr(self, "_summary_segments"):
+                seg_start = getattr(self, "_turns_seen", 0)
+                seg_end = seg_start + len(turns_to_summarize)
+                self._summary_segments.append(
+                    {"start": seg_start, "end": seg_end, "text": summary}
+                )
+                self._turns_seen = seg_end
+                self._compact_old_segments()
+                # Keep _previous_summary in sync so fallback code paths that
+                # read it (e.g. _build_static_fallback_summary, on_session_reset)
+                # still work without branching.
+                summary = self._render_summary_from_segments()
             self._previous_summary = summary
             self._summary_failure_cooldown_until = 0.0
             self._summary_model_fallen_back = False
             self._last_summary_error = None
-            return self._with_summary_prefix(summary)
+            return self._with_summary_prefix(self._previous_summary)
         except RuntimeError:
             # No provider configured — long cooldown, unlikely to self-resolve
             self._summary_failure_cooldown_until = time.monotonic() + _SUMMARY_FAILURE_COOLDOWN_SECONDS
@@ -2051,6 +2174,17 @@ The user has requested that this compaction PRIORITISE preserving all informatio
         if summary_idx is not None:
             if summary_body and not self._previous_summary:
                 self._previous_summary = summary_body
+                # P0-2: bootstrap segments from a legacy persisted summary so
+                # the delta path works on the very first re-compaction of a
+                # resumed session.  Assign turn range [0, 0) as a sentinel —
+                # the real range is unknown from a persisted message, but the
+                # key invariant (never re-feed this text as LLM input) is still
+                # honoured: _context_for_new_turns() includes it, and the next
+                # LLM call will only be asked to summarize the NEW turns.
+                if not self._summary_segments:
+                    self._summary_segments.append(
+                        {"start": 0, "end": 0, "text": summary_body}
+                    )
             turns_to_summarize = messages[max(compress_start, summary_idx + 1):compress_end]
 
         if not self.quiet_mode:
