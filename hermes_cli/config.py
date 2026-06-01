@@ -1009,6 +1009,11 @@ DEFAULT_CONFIG = {
                                       # Default False matches historical behavior; set to
                                       # True if you'd rather pause than silently lose
                                       # context turns when your aux model is flaky.
+        "memory_ledger": False,       # Opt-in persistent derived memory ledger
+                                      # for compaction atoms. Stores sanitized
+                                      # tasks/decisions/blockers/artifacts with
+                                      # source refs by hash, not raw turn bodies.
+        "memory_ledger_retention_days": 90,
     },
 
     # Anthropic prompt caching (Claude via OpenRouter or native Anthropic API).

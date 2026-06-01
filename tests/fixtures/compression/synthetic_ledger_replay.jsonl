@@ -1,0 +1,9 @@
+{"type":"turn_context","payload":{"turn":1}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Prefer local durable memory. Use append-only compression facts, not recursive summaries."}]}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Decision: use a typed ledger with provenance and keep summaries as background context."}]}}
+{"type":"turn_context","payload":{"turn":2}}
+{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"pytest tests/agent/test_compression_memory.py"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Verified pytest tests/agent/test_compression_memory.py passed. Artifact path: /tmp/hermes-agent/agent/compression_memory.py"}]}}
+{"type":"turn_context","payload":{"turn":3}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Do not resurrect done tasks after rotation; blocker: DB locks must warn without losing summary continuity."}]}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Plan: active blockers remain visible; completed work is marked done and must not become active again."}]}}

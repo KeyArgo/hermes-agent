@@ -1249,6 +1249,15 @@ def init_agent(
     compression_abort_on_summary_failure = str(
         _compression_cfg.get("abort_on_summary_failure", False)
     ).lower() in {"true", "1", "yes"}
+    compression_memory_ledger_enabled = str(
+        _compression_cfg.get("memory_ledger", False)
+    ).lower() in {"true", "1", "yes", "on"}
+    try:
+        compression_memory_ledger_retention_days = int(
+            _compression_cfg.get("memory_ledger_retention_days", 90)
+        )
+    except (TypeError, ValueError):
+        compression_memory_ledger_retention_days = 90
 
     # Read optional explicit context_length override for the auxiliary
     # compression model. Custom endpoints often cannot report this via
@@ -1466,6 +1475,8 @@ def init_agent(
             provider=agent.provider,
             api_mode=agent.api_mode,
             abort_on_summary_failure=compression_abort_on_summary_failure,
+            memory_ledger_enabled=compression_memory_ledger_enabled,
+            memory_ledger_retention_days=compression_memory_ledger_retention_days,
         )
     agent.compression_enabled = compression_enabled
 

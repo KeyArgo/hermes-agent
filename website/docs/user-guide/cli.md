@@ -373,6 +373,8 @@ Long conversations are automatically summarized when approaching context limits:
 compression:
   enabled: true
   threshold: 0.50    # Compress at 50% of context limit by default
+  memory_ledger: false  # Opt in to a local derived SQLite memory ledger
+  memory_ledger_retention_days: 90
 
 # Summarization model configured under auxiliary:
 auxiliary:
@@ -381,6 +383,8 @@ auxiliary:
 ```
 
 When compression triggers, middle turns are summarized while the first 3 and last 20 turns are always preserved.
+
+`compression.memory_ledger` adds a local `compression_memory.db` next to the normal Hermes state. It stores derived compaction atoms such as tasks, decisions, blockers, artifacts, verifications, and handover notes, plus source references by session/turn/content hash. It does not store raw compacted message bodies, and secret redaction is forced for this durable store even if display redaction is disabled. The ledger is opt-in because it is persistent memory; normal context summaries continue to work without it.
 
 ## Background Sessions
 

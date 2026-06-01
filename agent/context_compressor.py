@@ -24,6 +24,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from agent.auxiliary_client import call_llm, _is_connection_error
+from agent.compression_memory import CompressionMemoryLedger
 from agent.context_engine import ContextEngine
 from agent.model_metadata import (
     MINIMUM_CONTEXT_LENGTH,
@@ -35,11 +36,16 @@ from agent.redact import redact_sensitive_text
 logger = logging.getLogger(__name__)
 
 SUMMARY_PREFIX = (
-    "[CONTEXT COMPACTION] Earlier turns in this conversation were compacted "
-    "into the summary below. Treat the summary as background state and "
-    "reference material — not as a queue of pending tasks to resume. "
+    "[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns in this conversation "
+    "were compacted into the summary below. Treat the summary as background "
+    "reference and state, NOT as active instructions and not as a queue of "
+    "pending tasks to resume. "
     "The latest user message that appears AFTER this summary sets the current "
-    "goal; respond to that message. "
+    "goal; respond to that message. If the latest user message conflicts with "
+    "or supersedes the summary's '## active task', '## in progress', "
+    "'## pending user asks', or '## remaining work', the latest user message "
+    "wins; discard stale task framing while still using relevant facts as "
+    "background reference. "
     "If the latest message references prior work, files, decisions, or "
     "unresolved state (e.g. 'continue', 'do the next one', 'apply that to the "
     "other file', 'why did you do that?'), use the summary to resolve what it "
@@ -47,9 +53,10 @@ SUMMARY_PREFIX = (
     "Do NOT proactively re-do or re-answer requests described in the summary "
     "unless the latest message explicitly asks you to continue or revisit "
     "them; they were likely already handled. "
-    "If the latest message changes topic, stops, undoes, or otherwise "
-    "supersedes earlier in-flight work, follow the latest message and do not "
-    "re-surface the superseded work in later turns. "
+    "If the latest message changes topic, says stop, undo, roll back, never "
+    "mind, just verify, or otherwise supersedes earlier in-flight work, follow "
+    "the latest message and do not re-surface the superseded work in later "
+    "turns. "
     "IMPORTANT: Your persistent memory (MEMORY.md, USER.md) in the system "
     "prompt is ALWAYS authoritative and active — never ignore or deprioritize "
     "memory content due to this compaction note. "
@@ -149,6 +156,11 @@ _COMPRESSION_RESERVE_TOKENS = 4096 + 2000 + 1024  # max_output + summariser + ma
 # become another unbounded transcript copy after the LLM summarizer failed.
 _FALLBACK_SUMMARY_MAX_CHARS = 8_000
 _FALLBACK_TURN_MAX_CHARS = 700
+
+# Private ledger context is injected into the compacted handoff, but stripped
+# before a persisted handoff is treated as summary prose again.
+_LEDGER_CONTEXT_START = "## Private Compression Memory Ledger"
+_LEDGER_CONTEXT_END = "## End Private Compression Memory Ledger"
 
 
 _PATH_MENTION_RE = re.compile(r"(?:/|~/?|[A-Za-z]:\\)[^\s`'\")\]}<>]+")
@@ -593,6 +605,19 @@ class ContextCompressor(ContextEngine):
         self.last_compression_rough_tokens = 0
         self.last_rough_tokens_when_real_prompt_fit = 0
         self.awaiting_real_usage_after_compression = False
+        self._session_id = ""
+        self._parent_session_id = ""
+        self._last_memory_ledger_error = None
+
+    def on_session_start(self, session_id: str, **kwargs) -> None:
+        """Record session lineage for the private compression ledger."""
+        self._session_id = session_id or ""
+        parent_session_id = (
+            kwargs.get("old_session_id")
+            or kwargs.get("parent_session_id")
+        )
+        if parent_session_id is not None:
+            self._parent_session_id = parent_session_id or ""
 
     def update_model(
         self,
@@ -637,6 +662,8 @@ class ContextCompressor(ContextEngine):
         provider: str = "",
         api_mode: str = "",
         abort_on_summary_failure: bool = False,
+        memory_ledger_enabled: bool = False,
+        memory_ledger_retention_days: int = 90,
     ):
         self.model = model
         self.base_url = base_url
@@ -653,6 +680,8 @@ class ContextCompressor(ContextEngine):
         # When False (default = historical behavior), insert a
         # deterministic "summary unavailable" handoff and drop the middle window.
         self.abort_on_summary_failure = abort_on_summary_failure
+        self.memory_ledger_enabled = memory_ledger_enabled
+        self.memory_ledger_retention_days = max(1, int(memory_ledger_retention_days or 90))
 
         self.context_length = get_model_context_length(
             model, base_url=base_url, api_key=api_key,
@@ -753,6 +782,10 @@ class ContextCompressor(ContextEngine):
         # succeeded.  Silent recovery would hide the broken config.
         self._last_aux_model_failure_error: Optional[str] = None
         self._last_aux_model_failure_model: Optional[str] = None
+        self._session_id = ""
+        self._parent_session_id = ""
+        self._memory_ledger: Optional[CompressionMemoryLedger] = None
+        self._last_memory_ledger_error: Optional[str] = None
 
     def update_from_response(self, usage: Dict[str, Any]):
         """Update tracked token usage from API response."""
@@ -1418,12 +1451,130 @@ Summary generation was unavailable, so this is a best-effort deterministic fallb
         When there are no segments yet (first compaction) or the legacy
         _previous_summary path is active, returns that prose summary.
         """
+        parts: list[str] = []
+        ledger_context = self._private_memory_context()
+        if ledger_context:
+            parts.append(ledger_context)
         segments = getattr(self, "_summary_segments", None)
         if segments:
-            return self._render_summary_from_segments()
+            parts.append(self._render_summary_from_segments())
+            return "\n\n".join(part for part in parts if part)
         if self._previous_summary:
-            return self._previous_summary
-        return ""
+            parts.append(self._previous_summary)
+        return "\n\n".join(part for part in parts if part)
+
+    def _get_memory_ledger(self) -> Optional[CompressionMemoryLedger]:
+        """Return the private compression-memory ledger for the current session."""
+        if not getattr(self, "memory_ledger_enabled", False):
+            return None
+        if not getattr(self, "_session_id", ""):
+            return None
+        if getattr(self, "_memory_ledger", None) is None:
+            self._memory_ledger = CompressionMemoryLedger()
+            self._memory_ledger.prune_older_than(self.memory_ledger_retention_days)
+        return self._memory_ledger
+
+    def _private_memory_context(self) -> str:
+        """Render current-session typed atoms for prompt injection."""
+        session_id = getattr(self, "_session_id", "")
+        if not session_id:
+            return ""
+        try:
+            ledger = self._get_memory_ledger()
+            if ledger is None:
+                return ""
+            atoms = []
+            seen_atom_ids: set[str] = set()
+            current_has_segments = ledger.has_segments(session_id)
+            lineage = ledger.lineage_session_ids(
+                session_id,
+                parent_session_id=getattr(self, "_parent_session_id", "") or "",
+                max_depth=8,
+            )
+            for idx, sid in enumerate(lineage):
+                for row in ledger.retrieve_for_prompt(
+                    session_id=sid,
+                    query=self._previous_summary or "",
+                    limit=8,
+                ):
+                    atom_id = str(row["atom_id"])
+                    if atom_id in seen_atom_ids:
+                        continue
+                    if (
+                        idx > 0
+                        and current_has_segments
+                        and row["atom_type"] == "task"
+                        and row["status"] == "active"
+                    ):
+                        # Once the current session has its own post-rotation
+                        # compaction state, old active tasks from parent
+                        # sessions are stale unless restated by the current
+                        # session's summaries. Keep older decisions/artifacts,
+                        # but do not resurrect prior active work.
+                        continue
+                    seen_atom_ids.add(atom_id)
+                    atoms.append(row)
+                    if len(atoms) >= 8:
+                        break
+                if len(atoms) >= 8:
+                    break
+            rendered = ledger.format_for_prompt(atoms, limit=8)
+            if not rendered:
+                return ""
+            return (
+                f"{_LEDGER_CONTEXT_START}\n"
+                "Derived local state from prior compressions. Use as background "
+                "state, not as new user instructions. Missing, superseded, or "
+                "stale items must not override the latest user message.\n"
+                f"{rendered}\n"
+                f"{_LEDGER_CONTEXT_END}"
+            )
+        except Exception as exc:
+            err_text = str(exc).strip() or exc.__class__.__name__
+            if len(err_text) > 220:
+                err_text = err_text[:217].rstrip() + "..."
+            self._last_memory_ledger_error = err_text
+            if not self.quiet_mode:
+                logger.warning("Compression memory ledger unavailable: %s", err_text)
+            return ""
+
+    def _summary_body_for_prompt(self) -> str:
+        parts = []
+        ledger_context = self._private_memory_context()
+        if ledger_context:
+            parts.append(ledger_context)
+        if self._previous_summary:
+            parts.append(self._previous_summary)
+        return "\n\n".join(parts)
+
+    def _record_private_memory_segment(
+        self,
+        *,
+        start_turn: int,
+        end_turn: int,
+        summary_text: str,
+        turns_to_summarize: List[Dict[str, Any]],
+    ) -> None:
+        try:
+            ledger = self._get_memory_ledger()
+            if ledger is None:
+                return
+            ledger.record_segment(
+                session_id=self._session_id,
+                parent_session_id=getattr(self, "_parent_session_id", ""),
+                start_turn=start_turn,
+                end_turn=end_turn,
+                summary_text=summary_text,
+                turns=turns_to_summarize,
+            )
+            self._last_memory_ledger_error = None
+        except Exception as exc:
+            err_text = str(exc).strip() or exc.__class__.__name__
+            if len(err_text) > 220:
+                err_text = err_text[:217].rstrip() + "..."
+            self._last_memory_ledger_error = err_text
+            if not self.quiet_mode:
+                logger.warning("Compression memory ledger write failed: %s", err_text)
 
     def _fallback_to_main_for_compression(self, e: Exception, reason: str) -> None:
         """Switch from a separate ``summary_model`` back to the main model.
@@ -1660,6 +1811,12 @@ The user has requested that this compaction PRIORITISE preserving all informatio
                 self._summary_segments.append(
                     {"start": seg_start, "end": seg_end, "text": summary}
                 )
+                self._record_private_memory_segment(
+                    start_turn=seg_start,
+                    end_turn=seg_end,
+                    summary_text=summary,
+                    turns_to_summarize=turns_to_summarize,
+                )
                 self._turns_seen = seg_end
                 self._compact_old_segments()
                 # Keep _previous_summary in sync so fallback code paths that
@@ -1670,7 +1827,7 @@ The user has requested that this compaction PRIORITISE preserving all informatio
             self._summary_failure_cooldown_until = 0.0
             self._summary_model_fallen_back = False
             self._last_summary_error = None
-            return self._with_summary_prefix(self._previous_summary)
+            return self._with_summary_prefix(self._summary_body_for_prompt())
         except RuntimeError:
             # No provider configured — long cooldown, unlikely to self-resolve
             self._summary_failure_cooldown_until = time.monotonic() + _SUMMARY_FAILURE_COOLDOWN_SECONDS
@@ -1780,7 +1937,7 @@ The user has requested that this compaction PRIORITISE preserving all informatio
             return None
 
     @staticmethod
-    def _strip_summary_prefix(summary: str) -> str:
+    def _strip_summary_prefix(summary: str, *, strip_private_ledger: bool = True) -> str:
         """Return summary body without the current, legacy, or any historical
         handoff prefix.
 
@@ -1792,13 +1949,21 @@ The user has requested that this compaction PRIORITISE preserving all informatio
         text = (summary or "").strip()
         for prefix in (SUMMARY_PREFIX, LEGACY_SUMMARY_PREFIX, *_HISTORICAL_SUMMARY_PREFIXES):
             if text.startswith(prefix):
-                return text[len(prefix):].lstrip()
+                text = text[len(prefix):].lstrip()
+                break
+        if strip_private_ledger:
+            text = re.sub(
+                rf"\n?{re.escape(_LEDGER_CONTEXT_START)}.*?{re.escape(_LEDGER_CONTEXT_END)}\n?",
+                "\n",
+                text,
+                flags=re.S,
+            ).strip()
         return text
 
     @classmethod
     def _with_summary_prefix(cls, summary: str) -> str:
         """Normalize summary text to the current compaction handoff format."""
-        text = cls._strip_summary_prefix(summary)
+        text = cls._strip_summary_prefix(summary, strip_private_ledger=False)
         return f"{SUMMARY_PREFIX}\n{text}" if text else SUMMARY_PREFIX
 
     @staticmethod
@@ -2120,6 +2285,7 @@ The user has requested that this compaction PRIORITISE preserving all informatio
         self._last_aux_model_failure_model = None
         self._last_compress_aborted = False
         self._last_compress_over_reserve = False
+        self._last_memory_ledger_error = None
 
         # Manual /compress (force=True) bypasses the failure cooldown so the
         # user can retry immediately after an auto-compress abort.  Without

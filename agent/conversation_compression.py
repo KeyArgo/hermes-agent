@@ -430,6 +430,15 @@ def compress_context(
             pass
 
     try:
+        if hasattr(agent.context_compressor, "on_session_start"):
+            agent.context_compressor.on_session_start(
+                agent.session_id or "",
+                boundary_reason="pre_compression",
+            )
+    except Exception as _ce_err:
+        logger.debug("context engine on_session_start (pre-compression): %s", _ce_err)
+
+    try:
         compressed = agent.context_compressor.compress(messages, current_tokens=approx_tokens, focus_topic=focus_topic, force=force)
     except TypeError:
         # Plugin context engine with strict signature that doesn't accept
@@ -486,6 +495,15 @@ def compress_context(
                     f"({_aux_fail_err or 'unknown error'}). Recovered using main model — "
                     "check auxiliary.compression.model in config.yaml."
                 )
+
+    _ledger_err = getattr(agent.context_compressor, "_last_memory_ledger_error", None)
+    if _ledger_err:
+        if getattr(agent, "_last_compression_memory_warning", None) != _ledger_err:
+            agent._last_compression_memory_warning = _ledger_err
+            agent._emit_warning(
+                f"Compression memory ledger warning: {_ledger_err}. "
+                "Continuing with normal context summary only."
+            )
 
     todo_snapshot = agent._todo_store.format_for_injection()
     if todo_snapshot:
