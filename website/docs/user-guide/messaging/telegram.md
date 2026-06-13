@@ -583,6 +583,10 @@ If you work on several long-running projects, topics keep their context separate
 
 Each topic gets its own conversation session, history, and context — completely isolated from the others.
 
+### Read-state limitation
+
+Telegram private DM topics have a Bot API read-state limitation. Hermes can receive messages from a user-created topic and route replies back into that topic, but normal bot accounts don't expose a reliable API for marking the topic copy of an incoming user message as read. Telegram may show the root 'All Messages' chat and the topic with different unread/read indicators. This is expected Telegram behaviour, not necessarily a Hermes processing failure.
+
 ### Configuration
 
 :::caution Prerequisites
