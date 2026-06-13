@@ -4810,7 +4810,13 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
 
             if self.final_response_markdown == "strip":
                 line = _strip_markdown_syntax(line)
-            _emit_one(line)
+            width = _terminal_width_for_streaming() - len(_STREAM_PAD)
+            _wrapped = textwrap.wrap(line, width=width, break_long_words=False, break_on_hyphens=False)
+            if _wrapped:
+                for _wl in _wrapped:
+                    _emit_one(_wl)
+            else:
+                _emit_one('')
 
     def _flush_stream(self) -> None:
         """Emit any remaining partial line from the stream buffer and close the box."""
