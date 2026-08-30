@@ -504,7 +504,7 @@ class TestBuildConverseKwargs:
 
 
     def test_cache_point_added_for_supported_model(self):
-        """Claude and Nova on the Converse path get cachePoint markers on
+        """Anthropic Claude on the Converse path gets cachePoint markers on
         system, tools, and the message before the newest turn."""
         from agent.bedrock_adapter import build_converse_kwargs
         tools = [{"type": "function", "function": {
@@ -541,6 +541,30 @@ class TestBuildConverseKwargs:
         assert {"cachePoint": {"type": "default"}} not in kwargs["system"]
         for m in kwargs["messages"]:
             assert {"cachePoint": {"type": "default"}} not in m["content"]
+
+    def test_nova_gets_no_cache_point_in_tools(self):
+        """Nova accepts cachePoint in system/messages but REJECTS it in
+        toolConfig.tools (ValidationException: extraneous key [cachePoint]),
+        so tools must never carry a cache marker for a Nova model."""
+        from agent.bedrock_adapter import build_converse_kwargs
+        tools = [{"type": "function", "function": {
+            "name": "test", "description": "Test", "parameters": {},
+        }}]
+        messages = [
+            {"role": "system", "content": "Be helpful."},
+            {"role": "user", "content": "First"},
+            {"role": "assistant", "content": "Reply"},
+            {"role": "user", "content": "Second"},
+        ]
+        kwargs = build_converse_kwargs(
+            model="us.amazon.nova-pro-v1:0", messages=messages, tools=tools,
+        )
+        # Tools carry NO cachePoint marker for Nova.
+        assert {"cachePoint": {"type": "default"}} not in kwargs["toolConfig"]["tools"]
+        # ...but system and the pre-newest message still get their markers.
+        assert kwargs["system"][-1] == {"cachePoint": {"type": "default"}}
+        marked = kwargs["messages"][-2]["content"]
+        assert {"cachePoint": {"type": "default"}} in marked
 
 
 # ---------------------------------------------------------------------------
