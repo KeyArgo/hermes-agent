@@ -220,6 +220,23 @@ class TestOpenCodeGoGLM53Reasoning:
         )
         assert top_level == {"reasoning_effort": "max"}
 
+    @pytest.mark.parametrize(
+        "effort", ["minimal", "bogus"]
+    )
+    def test_unsupported_effort_clamps_to_glm53_floor(self, opencode_go_profile, effort):
+        # GLM-5.3's floor is "low" (vs GLM-5.2's "high") — an unrecognized or
+        # below-floor effort must degrade to the *weakest* graded level, never
+        # drop the reasoning_effort field (server default = more thinking than
+        # asked) and never escalate cost. "minimal" is on the shared ladder but
+        # below low; "bogus" is off-ladder and passes through clamp unchanged,
+        # then falls to the floor. Both land on "low".
+        extra_body, top_level = opencode_go_profile.build_api_kwargs_extras(
+            reasoning_config={"enabled": True, "effort": effort},
+            model="glm-5.3",
+        )
+        assert extra_body == {}
+        assert top_level == {"reasoning_effort": "low"}
+
 
 class TestOpenCodeGoModelGating:
     """Other OpenCode Go models must not receive Kimi/DeepSeek/GLM controls."""
