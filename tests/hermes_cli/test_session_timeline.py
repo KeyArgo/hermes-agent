@@ -266,3 +266,20 @@ def test_timeline_hides_every_async_delegation_envelope(timeline_store, envelope
     ])
     entries = client.get("/api/sessions/timeline-root/timeline").json()["entries"]
     assert [entry["preview"] for entry in entries] == [quoted]
+
+
+def test_timeline_keeps_async_headers_the_formatter_never_emits(timeline_store):
+    """The filter enumerates the headers ``format_process_notification`` actually emits.
+
+    ``process_registry_notifications`` emits ``[ASYNC DELEGATION TASK FAILED``,
+    ``[ASYNC DELEGATION BATCH COMPLETE`` and ``[ASYNC DELEGATION COMPLETE``. A looser
+    ``(?:BATCH |TASK )?(?:COMPLETE|FAILED)`` branch also swallows headers nobody emits
+    (here: no TASK), which would hide a prompt-shaped line that is not machine text.
+    """
+    db, client, _ = timeline_store
+    prompt = "[ASYNC DELEGATION FAILED — deleg_x] why did this land on my prompt?"
+    db.append_messages_batch("timeline-root", [
+        {"role": "user", "content": prompt, "timestamp": 300},
+    ])
+    entries = client.get("/api/sessions/timeline-root/timeline").json()["entries"]
+    assert [entry["preview"] for entry in entries] == [prompt]
