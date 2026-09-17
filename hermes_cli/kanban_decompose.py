@@ -11,8 +11,9 @@ profile) can judge completion and add more work.
 Mirrors ``kanban_specify`` (lazy aux import, lenient parse, never raises on
 expected failures). ``fanout=false`` collapses to the ``specify`` behaviour
 (tighten + promote, no children), making ``decompose`` a strict superset.
-Unknown assignees are rewritten to ``default_assignee`` — a child NEVER ends
-up with ``assignee=None``.
+Unroutable children land on ``kanban.default_assignee``, else on the card's own
+assignee, else on the active profile — a child NEVER ends up with
+``assignee=None``.
 """
 
 from __future__ import annotations
@@ -126,11 +127,18 @@ def _profile_author() -> str:
     return _specify_author("decomposer")
 
 
+def _active_profile_fallback() -> str:
+    """The profile this process runs as — the last-resort owner."""
+    try:
+        return profiles_mod.get_active_profile_name() or "default"
+    except Exception:
+        return "default"
+
+
 def _resolve_profile_from_cfg(cfg: dict, key: str) -> str:
     """``kanban.<key>`` if it names an existing profile, else the active
     default profile — so a task is never stranded for lack of an owner.
-    ``orchestrator_profile`` owns the root after fan-out; ``default_assignee``
-    catches children the decomposer can't route."""
+    ``orchestrator_profile`` owns the root after fan-out."""
     kanban_cfg = cfg.get("kanban", {}) if isinstance(cfg, dict) else {}
     explicit = (kanban_cfg.get(key) or "").strip()
     if explicit:
@@ -139,10 +147,38 @@ def _resolve_profile_from_cfg(cfg: dict, key: str) -> str:
                 return explicit
         except Exception:
             pass
-    try:
-        return profiles_mod.get_active_profile_name() or "default"
-    except Exception:
-        return "default"
+    return _active_profile_fallback()
+
+
+def _resolve_default_assignee(cfg: dict, *, root_assignee: Optional[str]) -> str:
+    """``kanban.default_assignee``, else the decomposed card's own assignee,
+    else the active profile.
+
+    ``default_assignee`` catches children the decomposer can't route. When it's
+    unset, the card's assignee is the right owner: it is an explicit routing
+    decision for THIS work. The active profile is ambient process state — a
+    multiplexed gateway ticks every home's board from one process whose
+    ``HERMES_HOME`` is the launch profile's, so falling straight through to it
+    parked unroutable children on whichever profile happened to launch the
+    dispatcher, including restricted profiles that cannot authenticate.
+    """
+    kanban_cfg = cfg.get("kanban", {}) if isinstance(cfg, dict) else {}
+    explicit = (kanban_cfg.get("default_assignee") or "").strip()
+    if explicit:
+        try:
+            if profiles_mod.profile_exists(explicit):
+                return explicit
+        except Exception:
+            pass
+    inheritable = (root_assignee or "").strip()
+    if inheritable:
+        try:
+            # A non-profile assignee (control-plane lane) is not inheritable.
+            if profiles_mod.profile_exists(inheritable):
+                return inheritable
+        except Exception:
+            pass
+    return _active_profile_fallback()
 
 
 def _build_roster() -> tuple[list[dict], set[str]]:
@@ -193,7 +229,7 @@ class _Routing:
     valid_names: set[str]
 
 
-def _load_routing() -> _Routing:
+def _load_routing(*, root_assignee: Optional[str] = None) -> _Routing:
     from hermes_cli.config import load_config_readonly
     try:
         cfg = load_config_readonly()
@@ -203,7 +239,7 @@ def _load_routing() -> _Routing:
     roster, valid_names = _build_roster()
     return _Routing(
         orchestrator=_resolve_profile_from_cfg(cfg, "orchestrator_profile"),
-        default_assignee=_resolve_profile_from_cfg(cfg, "default_assignee"),
+        default_assignee=_resolve_default_assignee(cfg, root_assignee=root_assignee),
         auto_promote=bool(kanban_cfg.get("auto_promote_children", True)),
         roster=roster,
         valid_names=valid_names,
@@ -305,7 +341,7 @@ def decompose_task(
     if task is None:
         return DecomposeOutcome(task_id, False, reason)
 
-    routing = _load_routing()
+    routing = _load_routing(root_assignee=task.assignee)
     raw, reason = _call_aux(
         "decompose", task_id, aux_task="kanban_decomposer", system=_SYSTEM_PROMPT,
         user=_USER_TEMPLATE.format(

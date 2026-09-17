@@ -175,3 +175,83 @@ def test_decompose_returns_false_when_task_not_triage(kanban_home):
     assert "not in triage" in outcome.reason
 
 
+def _fanout_null_assignee_payload():
+    return jsonlib.dumps({
+        "fanout": True,
+        "rationale": "test split",
+        "tasks": [{"title": "ship", "body": "code it", "assignee": None, "parents": []}],
+    })
+
+
+def test_unroutable_child_inherits_the_card_assignee_not_the_active_profile(kanban_home):
+    """Regression for #114294: the fallback owner for a child the decomposer cannot
+    route comes from the card being decomposed, not from whatever profile happened
+    to run the decomposer (the multiplexed gateway dispatcher ticks every home's
+    board from one process whose ambient profile is the launch profile's)."""
+    with kbc.connect() as conn:
+        tid = kb.create_task(conn, title="needs credentials", triage=True, assignee="zdr")
+
+    # Active profile is "private" (first entry in this fake roster); card is assigned "zdr".
+    patches = _patch_list_profiles(["private", "zdr"])
+    for p in patches:
+        p.start()
+    try:
+        with _patch_aux_client(_fanout_null_assignee_payload()), _patch_extra_body():
+            outcome = decomp.decompose_task(tid, author="me")
+    finally:
+        for p in patches:
+            p.stop()
+
+    assert outcome.ok, outcome.reason
+    with kbc.connect() as conn:
+        child = kb.get_task(conn, outcome.child_ids[0])
+    assert child.assignee == "zdr"
+
+
+def test_explicit_default_assignee_still_wins_over_the_card_assignee(kanban_home):
+    """``kanban.default_assignee`` is the operator's explicit routing choice and keeps
+    catching unroutable children even when the card already has an assignee."""
+    with kbc.connect() as conn:
+        tid = kb.create_task(conn, title="needs credentials", triage=True, assignee="zdr")
+
+    patches = _patch_list_profiles(["private", "zdr", "fallback"])
+    for p in patches:
+        p.start()
+    try:
+        with _patch_aux_client(_fanout_null_assignee_payload()), _patch_extra_body(), patch(
+            "hermes_cli.config.load_config_readonly",
+            return_value={"kanban": {"default_assignee": "fallback"}},
+        ):
+            outcome = decomp.decompose_task(tid, author="me")
+    finally:
+        for p in patches:
+            p.stop()
+
+    assert outcome.ok, outcome.reason
+    with kbc.connect() as conn:
+        child = kb.get_task(conn, outcome.child_ids[0])
+    assert child.assignee == "fallback"
+
+
+def test_non_profile_card_assignee_falls_back_to_the_active_profile(kanban_home):
+    """A control-plane lane name (not a real profile) is not inheritable — the
+    child still gets an owner instead of being stranded with ``assignee=None``."""
+    with kbc.connect() as conn:
+        tid = kb.create_task(conn, title="control lane work", triage=True, assignee="orion-cc")
+
+    patches = _patch_list_profiles(["private"])
+    for p in patches:
+        p.start()
+    try:
+        with _patch_aux_client(_fanout_null_assignee_payload()), _patch_extra_body():
+            outcome = decomp.decompose_task(tid, author="me")
+    finally:
+        for p in patches:
+            p.stop()
+
+    assert outcome.ok, outcome.reason
+    with kbc.connect() as conn:
+        child = kb.get_task(conn, outcome.child_ids[0])
+    assert child.assignee == "private"
+
+
