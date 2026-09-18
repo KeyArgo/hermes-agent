@@ -1227,6 +1227,7 @@ def _record_task_failure(
     release_claim: bool = False,
     end_run: bool = False,
     event_payload_extra: Optional[dict] = None,
+    infrastructure: bool = False,
 ) -> bool:
     """Record a non-success outcome and maybe trip the circuit breaker; every
     non-success path funnels through here so ``consecutive_failures`` stays
@@ -1239,6 +1240,9 @@ def _record_task_failure(
     ``blocked`` + ``gave_up``). Threshold: per-task ``max_retries`` >
     ``failure_limit`` > ``DEFAULT_FAILURE_LIMIT``. ``force_trip`` trips
     unconditionally (caller applied its own bounded-retry policy).
+
+    ``infrastructure=True`` (#114720): the HOST refused to start the worker, so the
+    card's content was never attempted: no counter move, no park, marker on the run.
     """
     if failure_limit is None:
         failure_limit = DEFAULT_FAILURE_LIMIT
@@ -1255,7 +1259,7 @@ def _record_task_failure(
             if release_claim
             else ("review" if row["status"] == "review" else "ready")
         )
-        failures = int(row["consecutive_failures"]) + 1
+        failures = int(row["consecutive_failures"]) + (0 if infrastructure else 1)
 
         # Per-task override wins over caller-supplied and default thresholds.
         task_override = _kb._row_get(row, "max_retries")
@@ -1264,7 +1268,7 @@ def _record_task_failure(
         else:
             effective_limit, limit_source = int(failure_limit), "dispatcher"
 
-        if not (force_trip or failures >= effective_limit):
+        if infrastructure or not (force_trip or failures >= effective_limit):
             if release_claim:
                 # Spawn path: restore the claimed source phase + clear claim.
                 conn.execute(
@@ -1282,13 +1286,14 @@ def _record_task_failure(
                 )
             # Timeout/crash path's caller already emitted its own event.
             if end_run:
+                extra = {"infrastructure": True} if infrastructure else {}
                 run_id = _kb._end_run(
                     conn, task_id, outcome=outcome, status=outcome, error=error,
-                    metadata={"failures": failures, "retry_status": retry_status},
+                    metadata={"failures": failures, "retry_status": retry_status, **extra},
                 )
                 _kb._append_event(
                     conn, task_id, outcome,
-                    {"error": error, "failures": failures, "retry_status": retry_status},
+                    {"error": error, "failures": failures, "retry_status": retry_status, **extra},
                     run_id=run_id,
                 )
             return False
@@ -1371,7 +1376,10 @@ def check_respawn_guard(
     ``"rate_limit_cooldown"`` (latest run ``rate_limited`` within the cooldown;
     checked BEFORE ``blocker_auth`` because the requeue stamps a quota-flavored
     ``last_failure_error`` that would otherwise park the task forever — that
-    path never increments ``consecutive_failures``), ``"blocker_auth"``
+    path never increments ``consecutive_failures``), ``"infrastructure_cooldown"``
+    (latest run was a host-level spawn refusal, ``infrastructure: True`` in its
+    metadata: also retried forever, spaced by the same cooldown, so a downed
+    user bus cannot park a card — #114720), ``"blocker_auth"``
     (quota/auth pattern; the breaker still trips eventually), then for the
     ready lane only ``"recent_success"`` (completed run within the window, unless
     a re-queue event arrived after it — a deliberate re-run) and ``"active_pr"``
@@ -1394,19 +1402,27 @@ def check_respawn_guard(
     #    LATEST run only: a newer crash/completion supersedes the rate-limit run.
     rl_cooldown = _kb._resolve_rate_limit_cooldown_seconds()
     latest_run = conn.execute(
-        "SELECT outcome, ended_at FROM task_runs "
+        "SELECT outcome, ended_at, metadata FROM task_runs "
         "WHERE task_id = ? AND ended_at IS NOT NULL "
         "ORDER BY ended_at DESC LIMIT 1",
         (task_id,),
     ).fetchone()
-    if latest_run is not None and latest_run["outcome"] == "rate_limited":
+    if latest_run is not None and (
+        latest_run["outcome"] == "rate_limited"
+        # A host-level spawn refusal: never counted, so the cooldown is its backoff.
+        or _kb._json_dict(latest_run["metadata"]).get("infrastructure")
+    ):
+        reason = (
+            "rate_limit_cooldown" if latest_run["outcome"] == "rate_limited"
+            else "infrastructure_cooldown"
+        )
         if rl_cooldown <= 0:
             # Cooldown disabled — respawn immediately, skipping blocker_auth so
             # the stamped rate-limit text doesn't re-trap the task.
             return None
         ended_at = latest_run["ended_at"]
         if ended_at is not None and (now - int(ended_at)) < rl_cooldown:
-            return "rate_limit_cooldown"
+            return reason
         # Cooldown elapsed — return early so blocker_auth doesn't catch the
         # stamped rate-limit text; this path intentionally retries forever
         # (spaced by the cooldown) until quota returns or a real run supersedes it.
@@ -1896,6 +1912,9 @@ def _dispatch_lane_task(
         # Force-load sdlc-review; the kanban lifecycle is already in every
         # worker's system prompt via KANBAN_GUIDANCE.
         claimed.skills = list(dict.fromkeys([*(claimed.skills or []), "sdlc-review"]))
+    # Late import: ``tools.process_registry`` is heavy and only needed at spawn.
+    from tools.process_registry import RestartSafeScopeUnavailable
+
     try:
         pid = _call_spawn_fn(spawn_fn if spawn_fn is not None else _default_spawn, claimed, str(workspace), board)
         if pid:
@@ -1908,6 +1927,15 @@ def _dispatch_lane_task(
         result.spawned.append((claimed.id, claimed.assignee or "", str(workspace)))
         _count_spawn(claimed.assignee)
         return True
+    except RestartSafeScopeUnavailable as exc:
+        # HOST refused to start the worker: the card's content was never attempted,
+        # so this must not consume its retry budget and must never auto-block (#114720).
+        _record_task_failure(
+            conn, claimed.id, str(exc),
+            outcome="spawn_failed", failure_limit=failure_limit, release_claim=True,
+            end_run=True, infrastructure=True,
+        )
+        return False
     except Exception as exc:
         if _record_task_failure(
             conn, claimed.id, str(exc),

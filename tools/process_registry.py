@@ -346,6 +346,10 @@ def scoped_spawn_lost_user_bus(spawn_env: Dict[str, str]) -> bool:
     return True
 
 
+class RestartSafeScopeUnavailable(RuntimeError):
+    """No restart-safe scope could be created, so no child was started (#114720)."""
+
+
 def restart_safe_gateway_child_argv(
     command: List[str], *, unit_suffix: str, require_restart_safe_scope: bool,
 ) -> GatewayChildDispatch:
@@ -367,7 +371,9 @@ def restart_safe_gateway_child_argv(
     def _degrade(detail: str) -> GatewayChildDispatch:
         if require_restart_safe_scope:
             # Stored as the cron execution's error and shown on the job row: name the remedy.
-            raise RuntimeError(f"cannot create restart-safe systemd scope for gateway child: {detail}")
+            raise RestartSafeScopeUnavailable(
+                f"cannot create restart-safe systemd scope for gateway child: {detail}"
+            )
         _warn_scope_degraded_once(detail)
         return GatewayChildDispatch("degraded", command)
 
