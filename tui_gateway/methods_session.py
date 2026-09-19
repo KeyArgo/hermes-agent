@@ -754,12 +754,7 @@ def _resume_lazy(ctx: _Resume) -> dict:
 def _resume_deferred(ctx: _Resume) -> dict:
     """Bounded ack; the transcript hydrates in the background (the ONE history read) and pages over REST."""
     sid, source, cwd = ctx.mint()
-    # The stored-override computation (_is_routable_provider / canonical_custom_identity)
-    # reads config from get_hermes_home() — bind the session's profile scope so a
-    # secondary profile's provider resolves against ITS config, not the launch profile's
-    # (matching _resume_eager; #115607).
-    with _profile_build_scope(ctx.profile_home):
-        overrides = _stored_session_runtime_overrides(ctx.found)
+    overrides = _stored_session_runtime_overrides(ctx.found)
     record = ctx.record(source, cwd, [], overrides)
     record.update(resume_history_ready=threading.Event(), resume_hydrating=True,
                   resume_message_count=int(ctx.found.get("message_count") or 0))
@@ -784,10 +779,7 @@ def _resume_cold(ctx: _Resume) -> dict:
         history, display_history, raw_history = ctx.restore()
     except Exception as e:
         return _err(ctx.rid, 5000, resume_failed_message(e))
-    # #115607: bind the session's profile scope for the stored-override computation so a
-    # secondary profile's provider resolves against ITS config, not the launch profile's.
-    with _profile_build_scope(ctx.profile_home):
-        overrides = _stored_session_runtime_overrides(ctx.found)
+    overrides = _stored_session_runtime_overrides(ctx.found)
     record = ctx.record(source, cwd, history, overrides, display_history_prefix=ctx.display_prefix(),
                         todo_state=_todo_state_from_history(history))
     if (reused := ctx.claim(sid, record)) is not None:
