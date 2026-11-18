@@ -1047,6 +1047,8 @@ export const en: Translations = {
       fileBrowserTitle: 'File Browser',
       fileBrowserDesc:
         'Show the file browser beside the chat when a workspace is open. The titlebar toggle changes this too.',
+      pluginBackdropsTitle: 'Allow plugin backdrops',
+      pluginBackdropsDesc: 'Let plugins display a visual behind the app.',
       vibeHeartsTitle: 'Vibe Hearts',
       vibeHeartsDesc:
         'Floating hearts when you say thanks, ily, good bot, or send a heart. Separate from Message Reactions above.',

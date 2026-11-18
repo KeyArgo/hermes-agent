@@ -705,7 +705,7 @@
      surface. Their fills are Tailwind utilities (bg-(--ui-bg-chrome) /
      bg-background), which cascade-layer above these base rules — hence the
      !important. Clearing them makes <body> the window's only field paint. */
-  :root[data-hermes-glass] [data-contrib-shell],
+  :root[data-hermes-glass]:not([data-hermes-plugin-backdrop]) [data-contrib-shell],
   :root[data-hermes-glass] [data-slot='sidebar-wrapper'] {
     background-color: transparent !important;
   }
@@ -4266,4 +4266,42 @@ html[data-hermes-desktop-host='browser'] [data-slot='sidebar-container'] {
 .aui-error-details .aui-error-details-link:hover {
   background: none;
   color: var(--err-ink);
+}
+
+/* The plugin backdrop lives inside the main shell's stacking context. */
+@layer base {
+  @media (prefers-reduced-transparency: no-preference) {
+    :root[data-hermes-plugin-backdrop] #root {
+      isolation: isolate;
+    }
+
+    :root[data-hermes-plugin-backdrop] {
+      --ui-chat-surface-background: transparent;
+      --ui-sidebar-surface-background: transparent;
+      --ui-editor-surface-background: transparent;
+      --ui-terminal-surface-background: var(--ui-bg-chrome);
+    }
+
+    :root[data-hermes-plugin-backdrop] [data-slot='sidebar-wrapper'] {
+      background-color: transparent !important;
+    }
+
+    :root[data-hermes-plugin-backdrop] [data-contrib-shell] {
+      background-color: color-mix(in srgb, var(--ui-bg-chrome) var(--plugin-backdrop-dim, 75%), transparent) !important;
+    }
+  }
+
+  @media (prefers-reduced-transparency: no-preference) {
+    :root[data-hermes-plugin-backdrop] [data-glass-opaque] {
+      --ui-chat-surface-background: var(--ui-bg-chrome);
+      --ui-editor-surface-background: var(--ui-bg-chrome);
+      --ui-sidebar-surface-background: var(--ui-bg-sidebar);
+    }
+
+    :root[data-hermes-plugin-backdrop] [data-glass-raised] {
+      --ui-chat-surface-background: color-mix(in srgb, var(--ui-bg-chrome) 94%, transparent);
+      --ui-sidebar-surface-background: color-mix(in srgb, var(--ui-bg-sidebar) 94%, transparent);
+      --ui-editor-surface-background: var(--ui-bg-chrome);
+    }
+  }
 }

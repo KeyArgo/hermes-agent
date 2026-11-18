@@ -241,6 +241,7 @@ Import the area constants from the SDK; each area has its own `data` payload.
 | Layout pane | `PANES_AREA` (`'panes'`) | `title` + `render` + `data: { placement, dock?, width?, height? }` |
 | Full page | `ROUTES_AREA` | `data: { path }` + `render` |
 | Sidebar nav | `SIDEBAR_NAV_AREA` | `data: { path, label, codicon }` |
+| Backdrop | `BACKDROP_AREA` | `render` (one full-window visual) + optional `data: { opacity?, dimApp? }` |
 | Status bar | `STATUSBAR_AREAS.left` / `.right` | `render` (or `data` as `StatusbarItem`) |
 | Title bar | `TITLEBAR_AREAS.left` / `.center` / `.right` | `data` as `TitlebarTool`, or a mount-scoped `<Contribute>` |
 | Page header | `WORKSPACE_PAGE_HEADER_AREA` | `<WorkspacePageHeaderControl>` inside your page (inline in a split tile) |
@@ -253,6 +254,22 @@ Import the area constants from the SDK; each area has its own `data` payload.
 | Appearance settings | `APPEARANCE_AREAS.extra` | `render` — controls appended to Settings → Appearance |
 | Tool media | `TOOL_MEDIA_RENDERER_AREA` (`'transcript.toolMedia'`) | `data: { tools, render }` — draw the `MEDIA:` files your package's own tools produced ([Tool media renderers](#tool-media-renderers)) |
 | Plugin settings page | `SETTINGS_PLUGINS_AREA` (`'settings.plugins'`) | Use `ctx.registerSettingsPage({ id, title, render, icon?, order?, children? })` — your own entry (with sub-pages) under Settings → Plugins |
+
+### Backdrop
+
+Register a component in `BACKDROP_AREA` to paint behind the main desktop window.
+It should fill its box. The host shows the most
+recently registered enabled backdrop, makes it click-through and inaccessible to
+focus, and removes it on disposal. Optional `data.opacity` and `data.dimApp`
+are numbers clamped by the host (`opacity` to 0–1 and `dimApp` to 0.55–1); `dimApp` controls the opacity of
+the app's theme-colored surface (default 0.75). Users can turn plugin backdrops
+off in Appearance, and reduced transparency unmounts the backdrop and keeps the app opaque.
+
+```tsx
+import { BACKDROP_AREA } from '@hermes/plugin-sdk'
+
+ctx.register({ id: 'scene', area: BACKDROP_AREA, render: Scene, data: { opacity: 0.8, dimApp: 0.7 } })
+```
 
 ### Panes
 
@@ -2485,8 +2502,8 @@ pipeline as a trust boundary.
 | Category | Exports |
 |----------|---------|
 | Host | `host` (`.state.*`, `.settings`, `.notify`, `.notifyError`, `.navigate`, `.onEvent`, `.logs`, `.status`, `.restartGateway`, `.request`, `.composer`, `.spellcheck`, `.sessions`, `.skills`, `.toolsets`, `.profiles`, `.pluginDecisions`) |
-| Plugin contract | `HermesPlugin`, `PluginContext`, `PluginContribution`, `PluginStorage`, `PluginFiles`, `PluginFolder`, `PluginFileEntry`, `PluginFilesResult`, `PluginOs`, `PluginPet`, `PetSayOptions`, `PetMessageTone`, `PluginAppActionId`, `PluginAppActionInfo`, `PluginRunActionResult`, `PLUGIN_APP_ACTIONS`, `PluginRestOptions`, `PluginNativeNotificationInput`, `PluginNotificationAction`, `HermesOpenTarget`, `Contribution` |
-| Area constants | `PANES_AREA`, `ROUTES_AREA`, `SIDEBAR_NAV_AREA`, `STATUSBAR_AREAS`, `TITLEBAR_AREAS`, `WORKSPACE_PAGE_HEADER_AREA`, `PALETTE_AREA`, `KEYBINDS_AREA`, `THEMES_AREA`, `COMPOSER_AREAS`, `MODEL_MENU_ROW_AREA`, `KANBAN_CARD_AREAS`, `SESSION_ROW_AREAS`, `SIDEBAR_NAV_PREFS_AREA`, `APPEARANCE_AREAS`, `SETTINGS_PLUGINS_AREA` |
+| Plugin contract | `HermesPlugin`, `PluginContext`, `PluginContribution`, `PluginBackdropContribution`, `PluginStorage`, `PluginFiles`, `PluginFolder`, `PluginFileEntry`, `PluginFilesResult`, `PluginOs`, `PluginPet`, `PetSayOptions`, `PetMessageTone`, `PluginAppActionId`, `PluginAppActionInfo`, `PluginRunActionResult`, `PLUGIN_APP_ACTIONS`, `PluginRestOptions`, `PluginNativeNotificationInput`, `PluginNotificationAction`, `HermesOpenTarget`, `Contribution` |
+| Area constants | `BACKDROP_AREA`, `PANES_AREA`, `ROUTES_AREA`, `SIDEBAR_NAV_AREA`, `STATUSBAR_AREAS`, `TITLEBAR_AREAS`, `WORKSPACE_PAGE_HEADER_AREA`, `PALETTE_AREA`, `KEYBINDS_AREA`, `THEMES_AREA`, `COMPOSER_AREAS`, `MODEL_MENU_ROW_AREA`, `KANBAN_CARD_AREAS`, `SESSION_ROW_AREAS`, `SIDEBAR_NAV_PREFS_AREA`, `APPEARANCE_AREAS`, `SETTINGS_PLUGINS_AREA` |
 | Area payloads | `PluginSettingsPage`, `PluginSettingsSubpage` (+ `pluginSettingsHref`), `RouteContribution`, `SidebarNavContribution`, `StatusbarItem`, `TitlebarTool`, `PaletteContribution`, `KeybindContribution`, `ComposerMiddleware`, `ComposerAttachmentProvider`, `ComposerContextMenuProvider` (+ `ComposerContextMenuItem`, `ComposerContextMenuContext`, `ComposerContextMenuAction`), `SessionRowSlotContribution`, `KanbanCardBadgeContribution` (+ `KanbanCard`, `KanbanCardBoard`, `KanbanCardBadge`, `KanbanCardBadgeTone`, `KANBAN_CARD_BADGE_HUES`, `KANBAN_CARD_BADGE_LIMITS`), `SidebarNavPrefsContribution` |
 | React / state | `useValue`, `atom`, `computed`, `useQuery`, `useMutation`, `useQueryClient`, `queryClient`, `Contribute`, `WorkspacePageHeaderControl` |
 | Theming | `useTheme`, `requestTheme`, `setAccentOverride`, `$accentOverride`, `retintTheme`, `themeHue`, `DesktopTheme`, `DesktopThemeColors`, plus OKLCH math (`hexToOklch`, `oklchToHex`, `oklchToSrgb255`, `mixOklab`, `maxChroma`, `hueDelta`, `normalizeHex`) and sRGB measures (`contrastRatio` — `number | null`, null for unparseable input — `readableOn`) |

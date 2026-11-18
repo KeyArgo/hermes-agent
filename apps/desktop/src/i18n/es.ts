@@ -1086,6 +1086,8 @@ export const esOverrides = {
       fileBrowserTitle: 'Explorador de archivos',
       fileBrowserDesc:
         'Muestra el explorador de archivos junto al chat cuando hay un espacio de trabajo abierto. El botón de la barra de título también cambia este ajuste.',
+      pluginBackdropsTitle: 'Permitir fondos de plugins',
+      pluginBackdropsDesc: 'Permite que los plugins muestren una imagen detrás de la aplicación.',
       vibeHeartsTitle: 'Corazones de vibra',
       vibeHeartsDesc:
         'Corazones flotantes cuando dices gracias, te quiero, buen bot o envías un corazón. Independiente de las reacciones a mensajes de arriba.',
