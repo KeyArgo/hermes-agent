@@ -377,6 +377,8 @@ export const zhHantSettings = {
       composerPopoutDesc: '允許將輸入框拖出底部停靠區。關閉時，輸入框停靠在底部。',
       fileBrowserTitle: '檔案瀏覽器',
       fileBrowserDesc: '開啟工作區時，在聊天旁顯示檔案瀏覽器。標題列的切換按鈕也會變更此設定。',
+      pluginBackdropsTitle: '允許外掛背景',
+      pluginBackdropsDesc: '允許外掛在應用程式後方顯示畫面。',
       vibeHeartsTitle: '心情愛心',
       vibeHeartsDesc: '當你說謝謝、愛你、good bot 或送出愛心時飄出的愛心。與上方的訊息回應是兩回事。',
       embedsTitle: '內嵌預覽',

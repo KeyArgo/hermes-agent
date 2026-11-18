@@ -806,6 +806,8 @@ export const zhOverrides = {
       composerPopoutDesc: '允许将输入框拖出底部停靠区。关闭时，输入框停靠在底部。',
       fileBrowserTitle: '文件浏览器',
       fileBrowserDesc: '打开工作区时，在聊天旁显示文件浏览器。标题栏的切换按钮也会更改此设置。',
+      pluginBackdropsTitle: '允许插件背景',
+      pluginBackdropsDesc: '允许插件在应用后方显示画面。',
       vibeHeartsTitle: '心情爱心',
       vibeHeartsDesc: '当你说谢谢、爱你、good bot 或发送爱心时飘出的爱心。与上方的消息回应是两回事。',
       embedsTitle: '内嵌预览',

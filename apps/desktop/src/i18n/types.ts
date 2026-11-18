@@ -859,6 +859,8 @@ export interface Translations extends NoticeTranslations {
       composerPopoutDesc: string
       fileBrowserTitle: string
       fileBrowserDesc: string
+      pluginBackdropsTitle: string
+      pluginBackdropsDesc: string
       vibeHeartsTitle: string
       vibeHeartsDesc: string
       embedsTitle: string
