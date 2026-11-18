@@ -22,6 +22,22 @@ afterEach(() => {
 })
 
 describe('BackdropLayer', () => {
+  it('selects a re-registered contribution and falls back when it is disposed', () => {
+    render(<BackdropLayer />)
+    act(() => {
+      disposers.push(ctx.register({ area: BACKDROP_AREA, id: 'a', order: -100, render: () => <div>first A</div> }))
+      disposers.push(ctx.register({ area: BACKDROP_AREA, id: 'b', order: 100, render: () => <div>B</div> }))
+    })
+    expect(screen.getByText('B')).toBeTruthy()
+    act(() => {
+      disposers.push(ctx.register({ area: BACKDROP_AREA, id: 'a', order: -100, render: () => <div>new A</div> }))
+    })
+    expect(screen.getByText('new A')).toBeTruthy()
+    expect(screen.queryByText('B')).toBeNull()
+    act(() => disposers.pop()?.())
+    expect(screen.getByText('B')).toBeTruthy()
+  })
+
   it('mounts the latest enabled contribution and restores the host on disposal', () => {
     const { container } = render(<BackdropLayer />)
     const bodyChildren = [...document.body.children]
