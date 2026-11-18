@@ -29,6 +29,7 @@ import { dispatchPluginNativeNotification, type PluginNativeNotificationInput } 
 import { $petActive } from '@/store/pet'
 import { clearPetMessages, type PetSayOptions, sayPetMessage } from '@/store/pet-plugin-messages'
 
+import { recordBackdropRegistration } from './backdrop'
 import { type GatewayEventListener, onGatewayEvent } from './events'
 import { createPluginFiles, type PluginFiles } from './plugin-files'
 import { createPluginPreview, type PluginPreview } from './plugin-preview'
@@ -385,12 +386,12 @@ export function createPluginContext(
 ): PluginContext {
   const source = `plugin:${pluginId}`
 
-  const scope = (c: PluginContribution): Contribution => ({
-    ...c,
-    ...(c.area === 'backdrop' ? { order: 0 } : {}),
-    id: `${pluginId}:${c.id}`,
-    source
-  })
+  const scope = (c: PluginContribution): Contribution => {
+    const contribution = { ...c, id: `${pluginId}:${c.id}`, source }
+    if (c.area === 'backdrop') recordBackdropRegistration(contribution)
+
+    return contribution
+  }
 
   const track = (dispose: () => void) => {
     onDispose?.(dispose)

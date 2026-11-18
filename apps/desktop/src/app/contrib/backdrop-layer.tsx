@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import { type CSSProperties, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
 
 import { ErrorBoundary } from '@/components/error-boundary'
+import { latestBackdrop } from '@/contrib/backdrop'
 import { useContributions } from '@/contrib/react/use-contributions'
 import type { Contribution } from '@/contrib/types'
 import { BACKDROP_AREA } from '@/sdk/areas'
@@ -70,7 +71,7 @@ export function BackdropLayer() {
   const items = useContributions(BACKDROP_AREA)
   const enabled = useStore($pluginBackdropsEnabled)
   const reduced = useSyncExternalStore(subscribeTransparency, reducedTransparency, () => false)
-  const contribution = items.filter(item => item.render).at(-1)
+  const contribution = latestBackdrop(items)
   const identity = useRef<{ contribution: Contribution | undefined; version: number }>({ contribution, version: 0 })
 
   if (identity.current.contribution !== contribution) {
