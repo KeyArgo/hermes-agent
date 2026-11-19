@@ -388,7 +388,10 @@ export function createPluginContext(
 
   const scope = (c: PluginContribution): Contribution => {
     const contribution = { ...c, id: `${pluginId}:${c.id}`, source }
-    if (c.area === 'backdrop') recordBackdropRegistration(contribution)
+
+    if (c.area === 'backdrop') {
+      recordBackdropRegistration(contribution)
+    }
 
     return contribution
   }

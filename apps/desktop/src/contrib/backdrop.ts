@@ -13,6 +13,7 @@ export function latestBackdrop(items: readonly Contribution[]): Contribution | u
 
   for (const item of items) {
     const registered = registrations.get(item) ?? 0
+
     if (item.render && registered > latestSequence) {
       latest = item
       latestSequence = registered
