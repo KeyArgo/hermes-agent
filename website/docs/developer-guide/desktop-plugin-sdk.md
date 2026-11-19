@@ -257,19 +257,45 @@ Import the area constants from the SDK; each area has its own `data` payload.
 
 ### Backdrop
 
-Register a component in `BACKDROP_AREA` to paint behind the main desktop window.
-It should fill its box. The host shows the most
-recently registered enabled backdrop, makes it click-through and inaccessible to
-focus, and removes it on disposal. Optional `data.opacity` and `data.dimApp`
-are numbers clamped by the host (`opacity` to 0–1 and `dimApp` to 0.55–1); `dimApp` controls the opacity of
-the app's theme-colored surface (default 0.75). Users can turn plugin backdrops
-off in Appearance, and reduced transparency unmounts the backdrop and keeps the app opaque.
+Register a component in `BACKDROP_AREA` to paint a full-window visual behind the main
+desktop window. The host mounts your `render` in a fixed, full-window layer behind the app
+and applies `data.opacity` to that layer — just paint inside the box you are given. Do not
+portal your content elsewhere: it must render inside this layer, or it paints over the UI
+instead of behind it. The layer is click-through, `inert` and `aria-hidden`, and is removed
+when you dispose the registration (or unload the plugin).
 
 ```tsx
 import { BACKDROP_AREA } from '@hermes/plugin-sdk'
 
+// `ctx.register` types a BACKDROP_AREA contribution as PluginBackdropContribution, so
+// `data` is the closed payload below and `render` is required.
 ctx.register({ id: 'scene', area: BACKDROP_AREA, render: Scene, data: { opacity: 0.8, dimApp: 0.7 } })
 ```
+
+Both `data` fields are numbers; invalid or missing values fall back to the defaults rather
+than clamping. `opacity` defaults to `1` (fully opaque) and clamps to 0–1. `dimApp` defaults
+to `0.75`, clamps to 0–1, and the resulting dim never drops below 70% so chat text stays
+readable over a bright scene. `dimApp` dims the app's own theme-colored surface, not your
+layer: the host sets `--plugin-backdrop-dim` and `data-hermes-plugin-backdrop` on `<html>`
+and the app's CSS overlay consumes them, removing both on unmount. Dimming from inside your
+render fights the host — use `dimApp`.
+
+Behaviour worth knowing before you ship one:
+
+- **Main window only.** Auxiliary, peer and watch windows get no backdrop.
+- **Latest registration wins**, including a re-registration of the same id. `order` is
+  accepted but is not a precedence key. The standard `enabled !== false` / `when()` filters
+  apply, and `when()` is *not* reactive — it is re-evaluated when the area's snapshot is
+  rebuilt (a register/remove in that area), not when your external state changes.
+- **One global toggle.** Settings ▸ Appearance ▸ plugin backdrops is a single persisted
+  boolean (`hermes.desktop.plugin-backdrops.v1`, default on): turning it off unmounts every
+  plugin backdrop, and it is not per-plugin.
+- **Reduced transparency wins.** While the OS asks for reduced transparency the backdrop
+  unmounts and the app stays opaque; the media query is live, so flipping the setting
+  restores the backdrop without a reload.
+- **Failures stay quiet.** A scene that throws is replaced by nothing (an error boundary
+  with a `null` fallback), and the layer remounts with a fresh key whenever the winning
+  contribution changes.
 
 ### Panes
 

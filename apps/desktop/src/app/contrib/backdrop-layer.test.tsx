@@ -86,7 +86,67 @@ describe('BackdropLayer', () => {
       )
     })
     expect((container.querySelector('[data-plugin-backdrop]') as HTMLElement).style.opacity).toBe('1')
-    expect(document.documentElement.style.getPropertyValue('--plugin-backdrop-dim')).toBe('55%')
+    expect(document.documentElement.style.getPropertyValue('--plugin-backdrop-dim')).toBe('70%')
+  })
+
+  it('floors the app dim at 70% so chat text stays readable over a bright backdrop', () => {
+    render(<BackdropLayer />)
+    act(() => {
+      disposers.push(
+        ctx.register({
+          area: BACKDROP_AREA,
+          id: 'washed',
+          data: { dimApp: 0.35 },
+          render: () => <div>bright scene</div>
+        })
+      )
+    })
+    expect(document.documentElement.style.getPropertyValue('--plugin-backdrop-dim')).toBe('70%')
+  })
+
+  it('restores a valid backdrop when the Appearance setting is toggled off and back on', () => {
+    const { container } = render(<BackdropLayer />)
+    act(() => {
+      disposers.push(ctx.register({ area: BACKDROP_AREA, id: 'scene', render: () => <div>scene</div> }))
+    })
+    expect(screen.getByText('scene')).toBeTruthy()
+
+    act(() => setPluginBackdropsEnabled(false))
+    expect(container.querySelector('[data-plugin-backdrop]')).toBeNull()
+    expect(screen.queryByText('scene')).toBeNull()
+    expect(document.documentElement.hasAttribute('data-hermes-plugin-backdrop')).toBe(false)
+
+    act(() => setPluginBackdropsEnabled(true))
+    expect(screen.getByText('scene')).toBeTruthy()
+    expect(document.documentElement.hasAttribute('data-hermes-plugin-backdrop')).toBe(true)
+    expect(document.documentElement.style.getPropertyValue('--plugin-backdrop-dim')).toBe('75%')
+  })
+
+  it('keeps a backdrop transparent when the browser ignores the reduced-transparency query', () => {
+    // An engine that predates the feature: matchMedia resolves, nothing matches.
+    // The root attribute is the CSS gate's only input, so the surface rules must
+    // still apply — the media query can never be the second source of truth.
+    vi.stubGlobal('matchMedia', () => ({
+      matches: false,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined
+    }))
+    render(<BackdropLayer />)
+    act(() => {
+      disposers.push(ctx.register({ area: BACKDROP_AREA, id: 'scene', render: () => <div>scene</div> }))
+    })
+    expect(screen.getByText('scene')).toBeTruthy()
+    expect(document.documentElement.hasAttribute('data-hermes-plugin-backdrop')).toBe(true)
+  })
+
+  it('keeps a backdrop transparent when matchMedia is missing entirely', () => {
+    vi.stubGlobal('matchMedia', undefined)
+    render(<BackdropLayer />)
+    act(() => {
+      disposers.push(ctx.register({ area: BACKDROP_AREA, id: 'scene', render: () => <div>scene</div> }))
+    })
+    expect(screen.getByText('scene')).toBeTruthy()
+    expect(document.documentElement.hasAttribute('data-hermes-plugin-backdrop')).toBe(true)
   })
 
   it('honors the setting and contains a failing contribution', () => {
@@ -160,6 +220,19 @@ describe('BackdropLayer', () => {
     expect(screen.getByText('scene')).toBeTruthy()
   })
 
+  it('type-checks a backdrop contribution at the call site', () => {
+    // Never invoked: the body is a `tsc` assertion, proven by the directives
+    // below turning into "unused @ts-expect-error" errors if the typing widens.
+    const backdropCallSite = () => {
+      // @ts-expect-error a backdrop's `data` is the closed { opacity?, dimApp? } payload.
+      ctx.register({ area: BACKDROP_AREA, id: 'bad-data', data: { bloom: 1 }, render: () => null })
+      // @ts-expect-error a backdrop must provide `render`.
+      ctx.register({ area: BACKDROP_AREA, id: 'no-render' })
+    }
+
+    expect(backdropCallSite).toBeTypeOf('function')
+  })
+
   it('skips entries without render and recovers when the same id is replaced', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
     render(<BackdropLayer />)
@@ -167,7 +240,9 @@ describe('BackdropLayer', () => {
       disposers.push(ctx.register({ area: BACKDROP_AREA, id: 'valid', render: () => <div>valid</div> }))
     })
     act(() => {
-      disposers.push(ctx.register({ area: BACKDROP_AREA, id: 'missing' }))
+      // A render-less backdrop can only arrive from an untyped/JS plugin (the
+      // typed `register` requires `render`); the host still skips it.
+      disposers.push(ctx.registerMany([{ area: BACKDROP_AREA, id: 'missing' }]))
     })
     expect(screen.getByText('valid')).toBeTruthy()
     act(() => {

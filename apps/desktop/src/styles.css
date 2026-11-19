@@ -4268,40 +4268,43 @@ html[data-hermes-desktop-host='browser'] [data-slot='sidebar-container'] {
   color: var(--err-ink);
 }
 
-/* The plugin backdrop lives inside the main shell's stacking context. */
+/* The plugin backdrop lives inside the main shell's stacking context.
+   These rules key off `data-hermes-plugin-backdrop` alone — the layer sets it
+   while a backdrop is genuinely mounted (main window, setting on, OS not asking
+   for reduced transparency) and removes it on unmount. Gating them on
+   `@media (prefers-reduced-transparency: no-preference)` instead would need a
+   second, divergent truth: a browser that doesn't know the query matches
+   neither `reduce` nor `no-preference`, so the JS layer would mount a backdrop
+   whose transparency treatment never applied. */
 @layer base {
-  @media (prefers-reduced-transparency: no-preference) {
-    :root[data-hermes-plugin-backdrop] #root {
-      isolation: isolate;
-    }
-
-    :root[data-hermes-plugin-backdrop] {
-      --ui-chat-surface-background: transparent;
-      --ui-sidebar-surface-background: transparent;
-      --ui-editor-surface-background: transparent;
-      --ui-terminal-surface-background: var(--ui-bg-chrome);
-    }
-
-    :root[data-hermes-plugin-backdrop] [data-slot='sidebar-wrapper'] {
-      background-color: transparent !important;
-    }
-
-    :root[data-hermes-plugin-backdrop] [data-contrib-shell] {
-      background-color: color-mix(in srgb, var(--ui-bg-chrome) var(--plugin-backdrop-dim, 75%), transparent) !important;
-    }
+  :root[data-hermes-plugin-backdrop] #root {
+    isolation: isolate;
   }
 
-  @media (prefers-reduced-transparency: no-preference) {
-    :root[data-hermes-plugin-backdrop] [data-glass-opaque] {
-      --ui-chat-surface-background: var(--ui-bg-chrome);
-      --ui-editor-surface-background: var(--ui-bg-chrome);
-      --ui-sidebar-surface-background: var(--ui-bg-sidebar);
-    }
+  :root[data-hermes-plugin-backdrop] {
+    --ui-chat-surface-background: transparent;
+    --ui-sidebar-surface-background: transparent;
+    --ui-editor-surface-background: transparent;
+    --ui-terminal-surface-background: var(--ui-bg-chrome);
+  }
 
-    :root[data-hermes-plugin-backdrop] [data-glass-raised] {
-      --ui-chat-surface-background: color-mix(in srgb, var(--ui-bg-chrome) 94%, transparent);
-      --ui-sidebar-surface-background: color-mix(in srgb, var(--ui-bg-sidebar) 94%, transparent);
-      --ui-editor-surface-background: var(--ui-bg-chrome);
-    }
+  :root[data-hermes-plugin-backdrop] [data-slot='sidebar-wrapper'] {
+    background-color: transparent !important;
+  }
+
+  :root[data-hermes-plugin-backdrop] [data-contrib-shell] {
+    background-color: color-mix(in srgb, var(--ui-bg-chrome) var(--plugin-backdrop-dim, 75%), transparent) !important;
+  }
+
+  :root[data-hermes-plugin-backdrop] [data-glass-opaque] {
+    --ui-chat-surface-background: var(--ui-bg-chrome);
+    --ui-editor-surface-background: var(--ui-bg-chrome);
+    --ui-sidebar-surface-background: var(--ui-bg-sidebar);
+  }
+
+  :root[data-hermes-plugin-backdrop] [data-glass-raised] {
+    --ui-chat-surface-background: color-mix(in srgb, var(--ui-bg-chrome) 94%, transparent);
+    --ui-sidebar-surface-background: color-mix(in srgb, var(--ui-bg-sidebar) 94%, transparent);
+    --ui-editor-surface-background: var(--ui-bg-chrome);
   }
 }

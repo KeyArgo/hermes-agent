@@ -18,6 +18,10 @@ function clamp(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : fallback
 }
 
+// The OS accessibility signal, re-read live: `reduce` unmounts the backdrop
+// entirely (see BackdropLayer). A browser that doesn't know the feature reports
+// `matches: false`, i.e. "transparency allowed" — which is why the CSS side keys
+// its surface rules off the attribute this layer sets, never off the media query.
 const transparencyQuery = '(prefers-reduced-transparency: reduce)'
 
 function subscribeTransparency(onChange: () => void) {
@@ -34,7 +38,7 @@ function reducedTransparency() {
 function BackdropContent({ contribution }: { contribution: Contribution }) {
   const data = contribution.data as BackdropData | undefined
   const Render = contribution.render!
-  const dim = Math.max(55, clamp(data?.dimApp, 0.75) * 100)
+  const dim = Math.max(70, clamp(data?.dimApp, 0.75) * 100)
 
   useLayoutEffect(() => {
     const root = document.documentElement
