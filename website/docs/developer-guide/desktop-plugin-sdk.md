@@ -264,6 +264,13 @@ portal your content elsewhere: it must render inside this layer, or it paints ov
 instead of behind it. The layer is click-through, `inert` and `aria-hidden`, and is removed
 when you dispose the registration (or unload the plugin).
 
+Your `render` runs in the app like any other plugin code — trusted, with no sandbox between
+it and the rest of the UI. The layer's `inert`, `aria-hidden` and `pointer-events: none` are
+layout rules, not a security boundary: they keep a scene from taking clicks and screen-reader
+focus, and they say nothing about what your code may do. Portals escape them — content
+portaled to `document.body` leaves the layer, paints over the app and can take input — so a
+backdrop must not portal, even "just" for a HUD or a debug overlay.
+
 ```tsx
 import { BACKDROP_AREA } from '@hermes/plugin-sdk'
 
@@ -272,13 +279,14 @@ import { BACKDROP_AREA } from '@hermes/plugin-sdk'
 ctx.register({ id: 'scene', area: BACKDROP_AREA, render: Scene, data: { opacity: 0.8, dimApp: 0.7 } })
 ```
 
-Both `data` fields are numbers; invalid or missing values fall back to the defaults rather
-than clamping. `opacity` defaults to `1` (fully opaque) and clamps to 0–1. `dimApp` defaults
-to `0.75`, clamps to 0–1, and the resulting dim never drops below 70% so chat text stays
-readable over a bright scene. `dimApp` dims the app's own theme-colored surface, not your
-layer: the host sets `--plugin-backdrop-dim` and `data-hermes-plugin-backdrop` on `<html>`
-and the app's CSS overlay consumes them, removing both on unmount. Dimming from inside your
-render fights the host — use `dimApp`.
+Both `data` fields are numbers. A value that is missing or not a finite number is not
+clamped — it falls back to the field's default. `opacity` defaults to `1` (fully opaque);
+`dimApp` defaults to `0.75`. Values that *are* numbers clamp to 0–1, and the app dim
+`dimApp` produces never drops below 70%, so chat text stays readable over a bright scene.
+`dimApp` dims the app's own theme-colored surface, not your layer: the host sets
+`--plugin-backdrop-dim` and `data-hermes-plugin-backdrop` on `<html>` and the app's CSS
+overlay consumes them, removing both on unmount. Dimming from inside your render fights the
+host — use `dimApp`.
 
 Behaviour worth knowing before you ship one:
 
@@ -287,12 +295,14 @@ Behaviour worth knowing before you ship one:
   accepted but is not a precedence key. The standard `enabled !== false` / `when()` filters
   apply, and `when()` is *not* reactive — it is re-evaluated when the area's snapshot is
   rebuilt (a register/remove in that area), not when your external state changes.
-- **One global toggle.** Settings ▸ Appearance ▸ plugin backdrops is a single persisted
-  boolean (`hermes.desktop.plugin-backdrops.v1`, default on): turning it off unmounts every
-  plugin backdrop, and it is not per-plugin.
-- **Reduced transparency wins.** While the OS asks for reduced transparency the backdrop
-  unmounts and the app stays opaque; the media query is live, so flipping the setting
-  restores the backdrop without a reload.
+- **Off until the user asks.** Settings ▸ Appearance ▸ plugin backdrops is a single
+  persisted boolean (`hermes.desktop.plugin-backdrops.v1`, **default off**): a registered
+  backdrop paints nothing on a fresh install, turning the setting on mounts the winning
+  registration (no reload), turning it off unmounts every plugin backdrop, and it is not
+  per-plugin.
+- **Reduced transparency or motion wins.** While the OS asks for reduced transparency, or
+  for reduced motion, the backdrop unmounts and the app stays opaque and still; both media
+  queries are live, so flipping either back restores the backdrop without a reload.
 - **Failures stay quiet.** A scene that throws is replaced by nothing (an error boundary
   with a `null` fallback), and the layer remounts with a fresh key whenever the winning
   contribution changes.

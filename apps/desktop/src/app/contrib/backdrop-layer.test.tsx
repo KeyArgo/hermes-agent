@@ -1,6 +1,6 @@
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { useEffect } from 'react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createPluginContext } from '@/contrib/plugin'
 import { BACKDROP_AREA } from '@/sdk/areas'
@@ -11,6 +11,12 @@ import { BackdropLayer } from './backdrop-layer'
 
 const disposers: Array<() => void> = []
 const ctx = createPluginContext('backdrop-test')
+
+// The setting is off on a fresh store; these tests exercise a live backdrop, so
+// they opt in. The off-by-default path has its own file (backdrop-layer-off).
+beforeEach(() => {
+  setPluginBackdropsEnabled(true)
+})
 
 afterEach(() => {
   cleanup()
@@ -216,6 +222,47 @@ describe('BackdropLayer', () => {
     act(() => {
       reduced = false
       listeners.forEach(listener => listener())
+    })
+    expect(screen.getByText('scene')).toBeTruthy()
+  })
+
+  it('unmounts when reduced motion changes and restores on reversal', () => {
+    let motion = false
+    const listeners = new Map<string, Set<() => void>>()
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      get matches() {
+        return query === '(prefers-reduced-motion: reduce)' ? motion : false
+      },
+      addEventListener: (_: string, listener: () => void) => {
+        const set = listeners.get(query) ?? new Set()
+        set.add(listener)
+        listeners.set(query, set)
+      },
+      removeEventListener: (_: string, listener: () => void) => {
+        listeners.get(query)?.delete(listener)
+      }
+    }))
+    const unmount = vi.fn()
+
+    function Scene() {
+      useEffect(() => unmount, [])
+
+      return <div>scene</div>
+    }
+
+    disposers.push(ctx.register({ area: BACKDROP_AREA, id: 'motion', render: Scene }))
+    render(<BackdropLayer />)
+    expect(screen.getByText('scene')).toBeTruthy()
+    act(() => {
+      motion = true
+      listeners.get('(prefers-reduced-motion: reduce)')?.forEach(listener => listener())
+    })
+    expect(screen.queryByText('scene')).toBeNull()
+    expect(unmount).toHaveBeenCalledOnce()
+    expect(document.documentElement.hasAttribute('data-hermes-plugin-backdrop')).toBe(false)
+    act(() => {
+      motion = false
+      listeners.get('(prefers-reduced-motion: reduce)')?.forEach(listener => listener())
     })
     expect(screen.getByText('scene')).toBeTruthy()
   })

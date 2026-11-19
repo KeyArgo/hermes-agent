@@ -40,13 +40,14 @@ class ContributionRegistry {
   /** Register one contribution. Returns a disposer that removes it. */
   register = (c: Contribution): (() => void) => this.registerMany([c])
 
-  /** Register several at once. Returns a disposer that removes all of them.
-   *  A batch touches each affected area exactly once — no per-item churn. */
+  /** Register several at once. Returns a disposer that removes these exact
+   *  registrations. A batch touches each affected area exactly once — no
+   *  per-item churn. */
   registerMany = (cs: Contribution[]): (() => void) => {
     cs.forEach(c => this.put(c))
     this.invalidate(cs.map(c => c.area))
 
-    return () => this.removeMany(cs.map(c => ({ area: c.area, id: c.id })))
+    return () => this.removeMany(cs)
   }
 
   /** Resolved, sorted, filtered entries for an area. Stable ref until mutated. */
@@ -97,12 +98,12 @@ class ContributionRegistry {
     }
   }
 
-  private removeMany(entries: { area: string; id: string }[]) {
+  private removeMany(entries: readonly Contribution[]) {
     const changed: string[] = []
 
-    for (const { area, id } of entries) {
-      if (this.take(area, id)) {
-        changed.push(area)
+    for (const c of entries) {
+      if (this.take(c)) {
+        changed.push(c.area)
       }
     }
 
@@ -117,24 +118,22 @@ class ContributionRegistry {
     this.byArea.set(c.area, [...list.filter(e => e.id !== c.id), c])
   }
 
-  /** Remove an entry without notifying (batchable). Returns whether it existed. */
-  private take(area: string, id: string): boolean {
-    const list = this.byArea.get(area)
+  /** Remove an entry without notifying (batchable). Returns whether it existed.
+   *  By registration identity, not id: re-registering an id replaces the entry,
+   *  and the replaced registration's disposer must not remove its replacement. */
+  private take(c: Contribution): boolean {
+    const list = this.byArea.get(c.area)
 
-    if (!list) {
+    if (!list || !list.includes(c)) {
       return false
     }
 
-    const next = list.filter(e => e.id !== id)
-
-    if (next.length === list.length) {
-      return false
-    }
+    const next = list.filter(e => e !== c)
 
     if (next.length) {
-      this.byArea.set(area, next)
+      this.byArea.set(c.area, next)
     } else {
-      this.byArea.delete(area)
+      this.byArea.delete(c.area)
     }
 
     return true

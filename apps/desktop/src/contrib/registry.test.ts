@@ -32,3 +32,21 @@ describe('registry.getArea', () => {
     expect(registry.getArea('test.stability')).not.toBe(first)
   })
 })
+
+describe('registry disposal', () => {
+  it('a stale disposer cannot remove a re-registration of the same id', () => {
+    const stale = registry.register({ area: 'test.disposal', id: 'bg' })
+    const replacement = { area: 'test.disposal', id: 'bg' }
+    dispose = registry.register(replacement)
+
+    // Disposal is by registration identity: the first registration was
+    // replaced, so its disposer must leave the replacement in place.
+    stale()
+    expect(registry.getArea('test.disposal')).toEqual([replacement])
+
+    // The replacement's own disposer still removes it.
+    dispose()
+    dispose = undefined
+    expect(registry.getArea('test.disposal')).toEqual([])
+  })
+})

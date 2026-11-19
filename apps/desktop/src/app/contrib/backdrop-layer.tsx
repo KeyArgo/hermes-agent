@@ -1,10 +1,11 @@
 import { useStore } from '@nanostores/react'
-import { type CSSProperties, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
+import { type CSSProperties, useLayoutEffect, useSyncExternalStore } from 'react'
 
 import { ErrorBoundary } from '@/components/error-boundary'
-import { latestBackdrop } from '@/contrib/backdrop'
+import { backdropRegistrationSeq, latestBackdrop } from '@/contrib/backdrop'
 import { useContributions } from '@/contrib/react/use-contributions'
 import type { Contribution } from '@/contrib/types'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { BACKDROP_AREA } from '@/sdk/areas'
 import { $pluginBackdropsEnabled } from '@/store/plugin-backdrops'
 import { isMainWindow } from '@/store/windows'
@@ -18,10 +19,11 @@ function clamp(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : fallback
 }
 
-// The OS accessibility signal, re-read live: `reduce` unmounts the backdrop
-// entirely (see BackdropLayer). A browser that doesn't know the feature reports
-// `matches: false`, i.e. "transparency allowed" — which is why the CSS side keys
-// its surface rules off the attribute this layer sets, never off the media query.
+// The OS accessibility signals, re-read live: reduced transparency or reduced
+// motion unmounts the backdrop entirely (see BackdropLayer). A browser that
+// doesn't know a feature reports `matches: false`, i.e. "allowed" — which is
+// why the CSS side keys its surface rules off the attribute this layer sets,
+// never off the media query.
 const transparencyQuery = '(prefers-reduced-transparency: reduce)'
 
 function subscribeTransparency(onChange: () => void) {
@@ -75,19 +77,22 @@ export function BackdropLayer() {
   const items = useContributions(BACKDROP_AREA)
   const enabled = useStore($pluginBackdropsEnabled)
   const reduced = useSyncExternalStore(subscribeTransparency, reducedTransparency, () => false)
+  const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
   const contribution = latestBackdrop(items)
-  const identity = useRef<{ contribution: Contribution | undefined; version: number }>({ contribution, version: 0 })
 
-  if (identity.current.contribution !== contribution) {
-    identity.current = { contribution, version: identity.current.version + 1 }
-  }
-
-  if (!enabled || reduced || !isMainWindow() || !contribution?.render) {
+  if (!enabled || reduced || reducedMotion || !isMainWindow() || !contribution?.render) {
     return null
   }
 
   return (
-    <ErrorBoundary fallback={() => null} key={identity.current.version} label={`contrib:${contribution.id}`}>
+    <ErrorBoundary
+      fallback={() => null}
+      // Registration identity, counted outside render: re-registering the same
+      // id is a new contribution with a new sequence number, so the boundary
+      // remounts and an error cannot outlive the registration it belonged to.
+      key={`${contribution.source ?? 'core'}:${contribution.id}:${backdropRegistrationSeq(contribution)}`}
+      label={`contrib:${contribution.id}`}
+    >
       <BackdropContent contribution={contribution} />
     </ErrorBoundary>
   )
