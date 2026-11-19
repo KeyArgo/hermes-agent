@@ -261,8 +261,11 @@ Register a component in `BACKDROP_AREA` to paint a full-window visual behind the
 desktop window. The host mounts your `render` in a fixed, full-window layer behind the app
 and applies `data.opacity` to that layer — just paint inside the box you are given. Do not
 portal your content elsewhere: it must render inside this layer, or it paints over the UI
-instead of behind it. The layer is click-through, `inert` and `aria-hidden`, and is removed
-when you dispose the registration (or unload the plugin).
+instead of behind it. The layer is click-through, `inert` and `aria-hidden`. Disposing a
+registration hands the layer to the newest registration still mounted, so a scene you
+disposed stops painting but does not necessarily remove the layer; it leaves when nothing
+remains to render, or when the Appearance setting is off, the window is not the main
+window, or the OS asks for reduced transparency or reduced motion.
 
 Your `render` runs in the app like any other plugin code — trusted, with no sandbox between
 it and the rest of the UI. The layer's `inert`, `aria-hidden` and `pointer-events: none` are
@@ -301,8 +304,10 @@ Behaviour worth knowing before you ship one:
   registration (no reload), turning it off unmounts every plugin backdrop, and it is not
   per-plugin.
 - **Reduced transparency or motion wins.** While the OS asks for reduced transparency, or
-  for reduced motion, the backdrop unmounts and the app stays opaque and still; both media
-  queries are live, so flipping either back restores the backdrop without a reload.
+  for reduced motion, the backdrop unmounts and the app keeps its normal opaque surfaces, so no
+  scene is ever composited under it; reduced motion additionally gets the app's own
+  reduced-motion treatment, while reduced transparency on its own changes nothing else. Both
+  media queries are live, so flipping either back restores the backdrop without a reload.
 - **Failures stay quiet.** A scene that throws is replaced by nothing (an error boundary
   with a `null` fallback), and the layer remounts with a fresh key whenever the winning
   contribution changes.

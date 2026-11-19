@@ -44,7 +44,8 @@ describe('BackdropLayer', () => {
     expect(screen.getByText('B')).toBeTruthy()
   })
 
-  it('mounts the latest enabled contribution and restores the host on disposal', () => {
+  it('mounts a real backdrop in a contained, click-through wrapper and restores the host on disposal', () => {
+    vi.spyOn(windows, 'isMainWindow').mockReturnValue(true)
     const { container } = render(<BackdropLayer />)
     const bodyChildren = [...document.body.children]
 
@@ -58,13 +59,17 @@ describe('BackdropLayer', () => {
         })
       )
     })
+    // A real contribution, inside the host's own wrapper — not a portal.
     const layer = container.querySelector('[data-plugin-backdrop]') as HTMLElement
     expect(screen.getByText('first')).toBeTruthy()
+    expect(layer.style.position).toBe('fixed')
     expect(layer.style.pointerEvents).toBe('none')
     expect(layer.getAttribute('aria-hidden')).toBe('true')
     expect(layer.hasAttribute('inert')).toBe(true)
-    expect(document.documentElement.hasAttribute('data-hermes-plugin-backdrop')).toBe(true)
     expect([...document.body.children]).toEqual(bodyChildren)
+    // The wrapper only exists because this is the main window.
+    expect(windows.isMainWindow).toHaveBeenCalled()
+    expect(document.documentElement.hasAttribute('data-hermes-plugin-backdrop')).toBe(true)
 
     act(() => {
       disposers.push(ctx.register({ area: BACKDROP_AREA, id: 'second', order: -100, render: () => <div>second</div> }))
@@ -321,7 +326,18 @@ describe('BackdropLayer', () => {
       return null
     }
 
-    const { container } = render(<BackdropLayer />)
+    // The app lives beside the layer: containment means a throwing scene takes
+    // only the backdrop down. React reports commit-phase (effect) errors the
+    // same way it reports render errors — through the nearest boundary's
+    // getDerivedStateFromError — so the subtree unmounts, its layout-effect
+    // cleanup strips the <html> attributes, and the fallback renders null.
+    const { container } = render(
+      <>
+        <div>app</div>
+        <BackdropLayer />
+      </>
+    )
+
     act(() => {
       disposers.push(
         ctx.register({
@@ -337,6 +353,8 @@ describe('BackdropLayer', () => {
     act(() => {
       disposers.push(ctx.register({ area: BACKDROP_AREA, id: 'effect', render: Broken }))
     })
+    expect(screen.getByText('app')).toBeTruthy()
+    expect(screen.queryByText('scene')).toBeNull()
     expect(document.documentElement.hasAttribute('data-hermes-plugin-backdrop')).toBe(false)
     expect(document.documentElement.style.getPropertyValue('--plugin-backdrop-dim')).toBe('')
   })

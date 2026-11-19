@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { type CSSProperties, useLayoutEffect, useSyncExternalStore } from 'react'
+import { type CSSProperties, useLayoutEffect } from 'react'
 
 import { ErrorBoundary } from '@/components/error-boundary'
 import { backdropRegistrationSeq, latestBackdrop } from '@/contrib/backdrop'
@@ -19,23 +19,13 @@ function clamp(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : fallback
 }
 
-// The OS accessibility signals, re-read live: reduced transparency or reduced
-// motion unmounts the backdrop entirely (see BackdropLayer). A browser that
-// doesn't know a feature reports `matches: false`, i.e. "allowed" — which is
-// why the CSS side keys its surface rules off the attribute this layer sets,
-// never off the media query.
-const transparencyQuery = '(prefers-reduced-transparency: reduce)'
-
-function subscribeTransparency(onChange: () => void) {
-  const media = window.matchMedia?.(transparencyQuery)
-  media?.addEventListener('change', onChange)
-
-  return () => media?.removeEventListener('change', onChange)
-}
-
-function reducedTransparency() {
-  return window.matchMedia?.(transparencyQuery).matches ?? false
-}
+// The OS accessibility signals, re-read live by `useMediaQuery`: reduced
+// transparency or reduced motion unmounts the backdrop entirely (see
+// BackdropLayer). A browser that doesn't know a feature reports `matches: false`,
+// i.e. "allowed" — which is why the CSS side keys its surface rules off the
+// attribute this layer sets, never off the media query.
+const TRANSPARENCY_QUERY = '(prefers-reduced-transparency: reduce)'
+const MOTION_QUERY = '(prefers-reduced-motion: reduce)'
 
 function BackdropContent({ contribution }: { contribution: Contribution }) {
   const data = contribution.data as BackdropData | undefined
@@ -76,8 +66,8 @@ function BackdropContent({ contribution }: { contribution: Contribution }) {
 export function BackdropLayer() {
   const items = useContributions(BACKDROP_AREA)
   const enabled = useStore($pluginBackdropsEnabled)
-  const reduced = useSyncExternalStore(subscribeTransparency, reducedTransparency, () => false)
-  const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
+  const reduced = useMediaQuery(TRANSPARENCY_QUERY)
+  const reducedMotion = useMediaQuery(MOTION_QUERY)
   const contribution = latestBackdrop(items)
 
   if (!enabled || reduced || reducedMotion || !isMainWindow() || !contribution?.render) {

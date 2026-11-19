@@ -67,6 +67,7 @@ afterEach(() => {
   releaseApprovalKey()
   clearAllPrompts()
   resetServerRequestsForTests()
+  document.documentElement.removeAttribute('data-hermes-plugin-backdrop')
   $activeSessionId.set(null)
   $gateway.set(null)
 })
@@ -401,5 +402,21 @@ describe('PendingApprovalStack', () => {
 
     expect(rpc).not.toHaveBeenCalledWith('approval.respond', expect.anything())
     expect($approvalRequest.get()).toBeNull()
+  })
+
+  it('keeps the approval card solid under a translucent window', () => {
+    // The card paints --ui-chat-surface-background, and both translucent modes
+    // (window glass, a plugin backdrop) clear that token on <html>. Without the
+    // opaque opt-out the scene — or the desktop — sits directly under the
+    // command text. CardStack owns the card surface, so the marker has to land
+    // there and not on the queue's wrapper. Contract: `[data-glass-opaque]` in
+    // styles.css.
+    document.documentElement.setAttribute('data-hermes-plugin-backdrop', '')
+    setRequest('rm -rf /tmp/x')
+    const { container } = render(<PendingApprovalStack />)
+    const surface = container.querySelector('[data-slot="card-stack-surface"]')
+
+    expect(surface).not.toBeNull()
+    expect(surface?.hasAttribute('data-glass-opaque')).toBe(true)
   })
 })
