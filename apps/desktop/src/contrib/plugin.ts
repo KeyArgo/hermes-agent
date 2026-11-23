@@ -13,6 +13,7 @@
  */
 
 import type { ReadableAtom } from 'nanostores'
+import type { ReactNode } from 'react'
 
 import { pluginRest, type PluginRestOptions, pluginSocket } from '@/hermes'
 import { createPluginI18n, type PluginI18n } from '@/i18n'
@@ -49,6 +50,20 @@ export type { PetMessageTone, PetSayOptions } from '@/store/pet-plugin-messages'
 /** A contribution as a plugin author writes it — provenance + id scoping are
  *  the host's job, so those fields are off-limits here. */
 export type PluginContribution = Omit<Contribution, 'source' | 'id'> & { id: string }
+
+export interface PluginBackdropContribution extends Omit<PluginContribution, 'area' | 'data' | 'render'> {
+  area: 'backdrop'
+  data?: { opacity?: number; dimApp?: number }
+  render: () => ReactNode
+  /** Accepted but not a precedence key: the latest registration wins even over
+   *  a lower `order` (see `contrib/backdrop.ts`). */
+  order?: number
+}
+
+/** What an area expects from a contribution. The backdrop's `data` payload is
+ *  closed and its `render` is required, so authors get both checked at the call
+ *  site; every other area keeps the open shape. See `PluginContext.register`. */
+export type PluginContributionFor<A extends string> = A extends 'backdrop' ? PluginBackdropContribution : PluginContribution
 
 /** Namespaced JSON persistence (the VS Code `globalState` analog). Keys live
  *  under `hermes.plugin.<id>.` — plugins can't read or clobber each other. */
@@ -115,8 +130,11 @@ export interface PluginFileDialogOptions {
 export interface PluginContext {
   /** The resolved plugin source tag, e.g. `'plugin:cost-meter'`. */
   readonly source: string
-  /** Register one contribution (id namespaced, source stamped). */
-  register: (c: PluginContribution) => () => void
+  /** Register one contribution (id namespaced, source stamped). A
+   *  `BACKDROP_AREA` contribution is checked as a `PluginBackdropContribution`,
+   *  so its `data: { opacity?, dimApp? }` and required `render` are typed at the
+   *  call site instead of widening to `unknown`. */
+  register: <A extends string>(c: PluginContributionFor<A> & { area: A }) => () => void
   /** Register several at once; the returned disposer removes all of them. */
   registerMany: (cs: PluginContribution[]) => () => void
   /** Add this plugin's page (and optional sub-pages) to Settings ▸ Plugins.
@@ -377,7 +395,10 @@ export function createPluginContext(
   capabilities: readonly string[] = []
 ): PluginContext {
   const source = `plugin:${pluginId}`
-  const scope = (c: PluginContribution): Contribution => ({ ...c, id: `${pluginId}:${c.id}`, source })
+
+  const scope = (c: PluginContribution): Contribution => {
+    return { ...c, id: `${pluginId}:${c.id}`, source }
+  }
 
   const track = (dispose: () => void) => {
     onDispose?.(dispose)

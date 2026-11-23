@@ -2,6 +2,10 @@
 // areas with no feature module of their own, plus area contracts whose module
 // lives in core but has no other public door.
 
+/** One full-window layer behind the app. The latest enabled contribution wins;
+ *  it is click-through, never takes focus, and stops painting on disposal (the
+ *  layer falls back to the newest remaining registration, if any). */
+export const BACKDROP_AREA = 'backdrop'
 export const PANES_AREA = 'panes'
 export const STATUSBAR_AREAS = { left: 'statusBar.left', right: 'statusBar.right' } as const
 /** Titlebar slots are PERMANENT mount points: a component registered here

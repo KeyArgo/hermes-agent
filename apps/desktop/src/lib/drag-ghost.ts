@@ -25,6 +25,12 @@ export function createDragGhost(label: string): DragGhost {
   const el = document.createElement('div')
 
   el.textContent = label
+  // The chip is a solid app surface, and it lives outside every painted shell
+  // (appended to <body>), so it declares the opt-out itself: under window glass
+  // or a plugin backdrop the field token is cleared, which would otherwise
+  // leave the label floating on the scene. Contract: `[data-glass-opaque]` in
+  // styles.css.
+  el.setAttribute('data-glass-opaque', '')
   el.style.cssText =
     'position:fixed;left:0;top:0;z-index:9999;pointer-events:none;max-width:16rem;overflow:hidden;' +
     'text-overflow:ellipsis;white-space:nowrap;padding:0.25rem 0.625rem;opacity:0.6;' +

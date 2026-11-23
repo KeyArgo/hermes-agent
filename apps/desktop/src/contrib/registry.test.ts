@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { latestBackdrop } from './backdrop'
 import { registry } from './registry'
 
 // Registrations are global (module-level registry); each test captures its
@@ -30,5 +31,39 @@ describe('registry.getArea', () => {
 
     // A real mutation of the area IS expected to invalidate the snapshot.
     expect(registry.getArea('test.stability')).not.toBe(first)
+  })
+})
+
+describe('registry disposal', () => {
+  it('a stale disposer cannot remove a re-registration of the same id', () => {
+    const stale = registry.register({ area: 'test.disposal', id: 'bg' })
+    const replacement = { area: 'test.disposal', id: 'bg' }
+    dispose = registry.register(replacement)
+
+    // Disposal is by registration identity: the first registration was
+    // replaced, so its disposer must leave the replacement in place.
+    stale()
+    expect(registry.getArea('test.disposal')).toEqual([replacement])
+
+    // The replacement's own disposer still removes it.
+    dispose()
+    dispose = undefined
+    expect(registry.getArea('test.disposal')).toEqual([])
+  })
+})
+
+describe('backdrop registrations', () => {
+  it('lets the newest backdrop win whatever path registered it', () => {
+    const render = () => null
+    const first = registry.register({ area: 'backdrop', id: 'plugin:first', render })
+    // A raw registration, the path <Contribute> takes, registered later.
+    const second = registry.register({ area: 'backdrop', id: 'contribute:second', render })
+
+    dispose = () => {
+      second()
+      first()
+    }
+
+    expect(latestBackdrop(registry.getArea('backdrop'))?.id).toBe('contribute:second')
   })
 })

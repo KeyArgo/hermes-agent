@@ -874,9 +874,12 @@ export const UserEditComposer: FC<UserEditComposerProps> = ({ cwd, gateway, sess
       <StickyHumanMessageContainer>
         <div
           className="composer-human-message-container human-execution-message-top relative flex w-full items-start rounded-md bg-(--ui-chat-surface-background)"
-          // A raised box over the transcript field: under window glass it keeps
-          // a near-opaque fill instead of thinning with the field behind it.
-          data-glass-raised=""
+          // The box the edit is typed into, pinned over the transcript: it masks
+          // the messages scrolled behind it, so it takes the opaque opt-out and
+          // not the raised mix — under a plugin backdrop the field token is
+          // cleared, and a 94% card still lets the scene reach the text. The
+          // main composer is pinned solid for the same reason.
+          data-glass-opaque=""
           onBlur={handleEditBlur}
           onDragEnter={handleDragEnter}
           onDragLeave={handleDragLeave}

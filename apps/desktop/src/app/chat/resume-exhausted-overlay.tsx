@@ -20,7 +20,12 @@ export function ResumeExhaustedOverlay({
   const { t } = useI18n()
 
   return (
-    <div className="absolute inset-0 z-10 grid place-items-center bg-(--ui-chat-surface-background) px-8 py-10">
+    <div
+      className="absolute inset-0 z-10 grid place-items-center bg-(--ui-chat-surface-background) px-8 py-10"
+      // Masks the stranded thread — must stay filled under a plugin backdrop
+      // or window glass. Contract: `[data-glass-opaque]` in styles.css.
+      data-glass-opaque=""
+    >
       <ErrorState className="max-w-sm" description={t.desktop.resumeStrandedBody} title={t.desktop.resumeStrandedTitle}>
         <div className="grid justify-items-center gap-1.5">
           <Button onClick={() => requestFreshSession()} size="sm" variant="outline">
