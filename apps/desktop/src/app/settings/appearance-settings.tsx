@@ -30,6 +30,7 @@ import { $introSplash, setIntroSplash } from '@/store/intro-splash'
 import { $fileBrowserOpen, setFileBrowserOpen } from '@/store/layout'
 import { $showModelPricing, setShowModelPricing } from '@/store/model-pricing'
 import { notifyError } from '@/store/notifications'
+import { $pluginBackdropsEnabled, setPluginBackdropsEnabled } from '@/store/plugin-backdrops'
 import { $activeGatewayProfile, $profiles, normalizeProfileKey } from '@/store/profile'
 import { $reactionsEnabled, setReactionsEnabled } from '@/store/reactions-enabled'
 import { $reasoningCollapsedByDefault, setReasoningCollapsedByDefault } from '@/store/reasoning-disclosure'
@@ -440,6 +441,7 @@ export function AppearanceSettings({ subpage }: AppearanceSettingsProps = {}) {
   const toursEnabled = useStore($toursEnabled)
   const spentTips = useStore($spentTipCount)
   const vibeHeartsEnabled = useStore($vibeHeartsEnabled)
+  const pluginBackdropsEnabled = useStore($pluginBackdropsEnabled)
   const backdrop = useStore($backdrop)
   const introSplash = useStore($introSplash)
   const showModelPricing = useStore($showModelPricing)
@@ -919,6 +921,16 @@ export function AppearanceSettings({ subpage }: AppearanceSettingsProps = {}) {
               id={settingElementId(ids.backdrop)}
               label={a.backdropTitle}
               onChange={setBackdrop}
+            />
+          )}
+
+          {show('window-layout') && (
+            <ToggleRow
+              checked={pluginBackdropsEnabled}
+              description={a.pluginBackdropsDesc}
+              id={settingElementId(ids.pluginBackdrops)}
+              label={a.pluginBackdropsTitle}
+              onChange={setPluginBackdropsEnabled}
             />
           )}
 

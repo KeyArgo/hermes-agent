@@ -394,6 +394,8 @@ export const arSettings = {
       composerPopoutDesc: 'السماح بسحب محرر الرسائل خارج موضعه. عند إيقاف الخيار، يبقى مثبتًا في الأسفل.',
       fileBrowserTitle: 'مستعرض الملفات',
       fileBrowserDesc: 'عرض مستعرض الملفات بجانب المحادثة عند فتح مساحة عمل. يغيّر زر شريط العنوان هذا الخيار أيضًا.',
+      pluginBackdropsTitle: 'السماح بخلفيات الإضافات',
+      pluginBackdropsDesc: 'السماح للإضافات بعرض صورة خلف التطبيق.',
       vibeHeartsTitle: 'قلوب المزاج',
       vibeHeartsDesc: 'قلوب عائمة عند قول شكراً أو أحبك أو good bot أو إرسال قلب. منفصلة عن تفاعلات الرسائل أعلاه.',
       embedsTitle: 'التضمينات المضمّنة',

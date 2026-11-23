@@ -602,6 +602,8 @@ export const jaOverrides = {
       fileBrowserTitle: 'ファイルブラウザ',
       fileBrowserDesc:
         'ワークスペースを開いているとき、チャットの横にファイルブラウザを表示します。タイトルバーのボタンでも切り替わります。',
+      pluginBackdropsTitle: 'プラグインの背景を許可',
+      pluginBackdropsDesc: 'プラグインがアプリの背後に画像を表示できるようにします。',
       vibeHeartsTitle: 'バイブハート',
       vibeHeartsDesc:
         'ありがとう・愛してる・good bot・ハート絵文字のときに浮かぶハート。上のメッセージリアクションとは別です。',

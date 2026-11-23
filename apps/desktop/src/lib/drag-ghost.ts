@@ -25,6 +25,9 @@ export function createDragGhost(label: string): DragGhost {
   const el = document.createElement('div')
 
   el.textContent = label
+  // Appended to <body>, outside every painted shell, so the chip masks the
+  // scene itself rather than floating on it.
+  el.setAttribute('data-backdrop-opaque', '')
   el.style.cssText =
     'position:fixed;left:0;top:0;z-index:9999;pointer-events:none;max-width:16rem;overflow:hidden;' +
     'text-overflow:ellipsis;white-space:nowrap;padding:0.25rem 0.625rem;opacity:0.6;' +

@@ -705,7 +705,7 @@
      surface. Their fills are Tailwind utilities (bg-(--ui-bg-chrome) /
      bg-background), which cascade-layer above these base rules — hence the
      !important. Clearing them makes <body> the window's only field paint. */
-  :root[data-hermes-glass] [data-contrib-shell],
+  :root[data-hermes-glass]:not([data-hermes-plugin-backdrop]) [data-contrib-shell],
   :root[data-hermes-glass] [data-slot='sidebar-wrapper'] {
     background-color: transparent !important;
   }
@@ -4300,4 +4300,71 @@ html[data-hermes-desktop-host='browser'] [data-slot='sidebar-container'] {
 .aui-error-details .aui-error-details-link:hover {
   background: none;
   color: var(--err-ink);
+}
+
+/* Keyed off `data-hermes-plugin-backdrop` alone: the layer sets it while a
+   backdrop is genuinely mounted and removes it on unmount. */
+@layer base {
+  :root[data-hermes-plugin-backdrop] #root {
+    isolation: isolate;
+  }
+
+  :root[data-hermes-plugin-backdrop] {
+    --ui-chat-surface-background: transparent;
+    --ui-sidebar-surface-background: transparent;
+    --ui-editor-surface-background: transparent;
+    --ui-terminal-surface-background: var(--ui-bg-chrome);
+    /* The transcript's overflow fades start from the shell's own mix, not from
+       the cleared field token (a fade from transparent is no cue at all). */
+    --expandable-fade-from: color-mix(in srgb, var(--ui-bg-chrome) var(--plugin-backdrop-dim, 85%), transparent);
+  }
+
+  /* The live theme's base, so a boot-time html background cannot show through
+     the scene after a theme switch. */
+  :root[data-hermes-plugin-backdrop]:not([data-hermes-glass]) body {
+    background-color: var(--ui-bg-chrome);
+  }
+
+  :root[data-hermes-plugin-backdrop] [data-slot='sidebar-wrapper'] {
+    background-color: transparent !important;
+  }
+
+  :root[data-hermes-plugin-backdrop] [data-contrib-shell] {
+    background-color: color-mix(in srgb, var(--ui-bg-chrome) var(--plugin-backdrop-dim, 85%), transparent) !important;
+  }
+
+  :root[data-hermes-plugin-backdrop] [data-glass-raised] {
+    --ui-chat-surface-background: color-mix(
+      in srgb,
+      var(--ui-bg-chrome) max(94%, var(--plugin-backdrop-dim, 85%), var(--translucency-glass-keep, 0%)),
+      transparent
+    );
+    --ui-sidebar-surface-background: color-mix(
+      in srgb,
+      var(--ui-bg-sidebar) max(94%, var(--plugin-backdrop-dim, 85%), var(--translucency-glass-keep, 0%)),
+      transparent
+    );
+    --ui-editor-surface-background: var(--ui-bg-chrome);
+  }
+
+  /* Surfaces that mask their own content take the opaque fill. `data-glass-opaque`
+     already means that under window glass; `data-backdrop-opaque` lets a surface
+     mask the scene without changing how it looks under glass alone. Raised here
+     too, so a surface declaring both stays solid. */
+  :root[data-hermes-plugin-backdrop] [data-glass-opaque],
+  :root[data-hermes-plugin-backdrop] [data-backdrop-opaque] {
+    --ui-chat-surface-background: var(--ui-bg-chrome);
+    --ui-editor-surface-background: var(--ui-bg-chrome);
+    --ui-sidebar-surface-background: var(--ui-bg-sidebar);
+  }
+
+  /* Small text on a cleared surface fails contrast over a moving scene. */
+  :root[data-hermes-plugin-backdrop] [data-slot='statusbar'] {
+    --ui-sidebar-surface-background: var(--ui-bg-chrome);
+  }
+
+  /* The composer is where typing is read, so it is a card, not a window. */
+  :root[data-hermes-plugin-backdrop] [data-slot='composer-root'] {
+    --composer-fill: var(--dt-card) !important;
+  }
 }

@@ -2,12 +2,15 @@
 
 export type { ClearProfileBackendInput, SetProfileBackendInput } from './profile-backend'
 
+export type { PluginBackdropData } from '@/contrib/backdrop'
+
 export type {
   HermesPlugin,
   PetMessageTone,
   PetSayOptions,
   PluginAppActionId,
   PluginAppActionInfo,
+  PluginBackdropContribution,
   PluginContext,
   PluginContribution,
   PluginFileEntry,

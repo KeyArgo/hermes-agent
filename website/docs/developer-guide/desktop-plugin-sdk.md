@@ -185,10 +185,14 @@ collide.
 interface PluginContext {
   /** Resolved source tag, e.g. `'plugin:hello'`. */
   readonly source: string
-  /** Register one contribution (id namespaced, source stamped). Returns a disposer. */
-  register: (c: PluginContribution) => () => void
-  /** Register several at once; the returned disposer removes all of them. */
-  registerMany: (cs: PluginContribution[]) => () => void
+  /** Register one contribution (id namespaced, source stamped). Returns a disposer. A
+   *  backdrop is checked as a `PluginBackdropContribution`. */
+  register: <A extends string>(c: PluginContributionFor<A> & { area: A }) => () => void
+  /** Register several at once; the returned disposer removes all of them. Each entry is
+   *  checked by its own `area`, exactly like `register`. */
+  registerMany: <C extends readonly PluginContribution[]>(
+    cs: C & { readonly [K in keyof C]: CheckedContribution<C[K]> }
+  ) => () => void
   /** Own entry (+ sub-pages) under Settings → Plugins. Removed on disable/unload. */
   registerSettingsPage: (page: PluginSettingsPage) => () => void
   /** REST to this plugin's own backend namespace (`/api/plugins/<id>`). */
@@ -241,6 +245,7 @@ Import the area constants from the SDK; each area has its own `data` payload.
 | Layout pane | `PANES_AREA` (`'panes'`) | `title` + `render` + `data: { placement, dock?, width?, height? }` |
 | Full page | `ROUTES_AREA` | `data: { path }` + `render` |
 | Sidebar nav | `SIDEBAR_NAV_AREA` | `data: { path, label, codicon }` |
+| Backdrop | `BACKDROP_AREA` | `render` (one full-window visual) + optional `data: PluginBackdropData` (`{ opacity?, appOpacity? }`) |
 | Status bar | `STATUSBAR_AREAS.left` / `.right` | `render` (or `data` as `StatusbarItem`) |
 | Title bar | `TITLEBAR_AREAS.left` / `.center` / `.right` | `data` as `TitlebarTool`, or a mount-scoped `<Contribute>` |
 | Page header | `WORKSPACE_PAGE_HEADER_AREA` | `<WorkspacePageHeaderControl>` inside your page (inline in a split tile) |
@@ -253,6 +258,63 @@ Import the area constants from the SDK; each area has its own `data` payload.
 | Appearance settings | `APPEARANCE_AREAS.extra` | `render` — controls appended to Settings → Appearance |
 | Tool media | `TOOL_MEDIA_RENDERER_AREA` (`'transcript.toolMedia'`) | `data: { tools, render }` — draw the `MEDIA:` files your package's own tools produced ([Tool media renderers](#tool-media-renderers)) |
 | Plugin settings page | `SETTINGS_PLUGINS_AREA` (`'settings.plugins'`) | Use `ctx.registerSettingsPage({ id, title, render, icon?, order?, children? })` — your own entry (with sub-pages) under Settings → Plugins |
+
+### Backdrop
+
+Register a component in `BACKDROP_AREA` to paint a full-window visual behind the main
+desktop window. The host mounts your `render` in a fixed, full-window layer behind the app
+and applies `data.opacity` to that layer — just paint inside the box you are given, and do
+not portal it: content portaled to `document.body` leaves the layer and paints over the UI.
+The layer is click-through, `inert` and `aria-hidden`. Disposing a registration hands the
+layer to the newest remaining registration, so a scene you disposed stops painting but does
+not necessarily remove the layer; it leaves when nothing remains to render, or when the
+Appearance setting is off, the window is not the main window, or the OS asks for less
+motion, less transparency or more contrast.
+
+Your `render` runs in the app like any other plugin code — trusted, with no sandbox between
+it and the rest of the UI. The layer's `inert`, `aria-hidden` and `pointer-events: none` are
+layout rules, not a security boundary: they keep a scene from taking clicks and screen-reader
+focus, and they say nothing about what your code may do.
+
+```tsx
+import { BACKDROP_AREA } from '@hermes/plugin-sdk'
+
+// `ctx.register` types a BACKDROP_AREA contribution as PluginBackdropContribution, so
+// `data` is the closed PluginBackdropData payload and `render` is required.
+ctx.register({ id: 'scene', area: BACKDROP_AREA, render: Scene, data: { opacity: 0.8, appOpacity: 0.9 } })
+```
+
+Both `data` fields are numbers. A value that is missing or not a finite number is not
+clamped — it falls back to the field's default. `opacity` (the scene) defaults to `1`;
+`appOpacity` (the app's own shell in front of it) defaults to `0.85`. Values that *are*
+numbers clamp to 0–1, and `appOpacity` never drops below 85%, so secondary text stays
+readable over a bright scene. Small-text surfaces (the status bar, the composer, the inline
+edit box) keep an opaque fill either way. `appOpacity` fades the app's theme-colored shell,
+not your layer: the host sets `--plugin-backdrop-dim` and `data-hermes-plugin-backdrop` on
+`<html>` and the app's CSS consumes them, removing both on unmount. Dimming from inside your
+render fights the host — use `appOpacity`.
+
+Behaviour worth knowing before you ship one:
+
+- **Main window only.** Auxiliary, peer and watch windows get no backdrop.
+- **Latest registration wins**, including a re-registration of the same id. `order` is
+  accepted but is not a precedence key. The standard `enabled !== false` / `when()` filters
+  apply, and `when()` is *not* reactive — it is re-evaluated when the area's snapshot is
+  rebuilt (a register/remove in that area), not when your external state changes.
+- **Off until the user asks.** Settings ▸ Appearance ▸ window layout is a single persisted
+  boolean (`hermes.desktop.plugin-backdrops.v1`, **default off**): a registered backdrop
+  paints nothing on a fresh install, turning the setting on mounts the winning registration
+  (no reload), turning it off unmounts every plugin backdrop, and it is not per-plugin.
+- **One reduction preference unmounts it.** The layer leaves while the OS asks for reduced
+  motion, reduced transparency, increased contrast (`prefers-contrast: more`) or forced
+  colors (`forced-colors: active`). The host then restores the user's existing window
+  appearance — window glass included — so no scene is composited under a reduced-transparency
+  or high-contrast surface. Every preference is read live: with several active at once, the
+  scene returns only when none applies.
+- **Failures stay quiet.** A scene that throws is replaced by nothing (an error boundary
+  with a `null` fallback), the layer remounts with a fresh key whenever a backdrop is
+  registered, and an entry whose `render` is not a function is skipped in favour of the
+  previous valid backdrop.
 
 ### Panes
 
@@ -2556,8 +2618,8 @@ pipeline as a trust boundary.
 | Category | Exports |
 |----------|---------|
 | Host | `host` (`.state.*`, `.settings`, `.notify`, `.notifyError`, `.navigate`, `.onEvent`, `.logs`, `.status`, `.restartGateway`, `.request`, `.composer`, `.spellcheck`, `.sessions`, `.skills`, `.toolsets`, `.profiles`, `.pluginDecisions`) |
-| Plugin contract | `HermesPlugin`, `PluginContext`, `PluginContribution`, `PluginStorage`, `PluginFiles`, `PluginFolder`, `PluginFileEntry`, `PluginFilesResult`, `PluginOs`, `PluginPet`, `PetSayOptions`, `PetMessageTone`, `PluginAppActionId`, `PluginAppActionInfo`, `PluginRunActionResult`, `PLUGIN_APP_ACTIONS`, `PluginRestOptions`, `PluginNativeNotificationInput`, `PluginNotificationAction`, `HermesOpenTarget`, `Contribution` |
-| Area constants | `PANES_AREA`, `ROUTES_AREA`, `SIDEBAR_NAV_AREA`, `STATUSBAR_AREAS`, `TITLEBAR_AREAS`, `WORKSPACE_PAGE_HEADER_AREA`, `PALETTE_AREA`, `KEYBINDS_AREA`, `THEMES_AREA`, `COMPOSER_AREAS`, `MODEL_MENU_ROW_AREA`, `KANBAN_CARD_AREAS`, `SESSION_ROW_AREAS`, `SIDEBAR_NAV_PREFS_AREA`, `APPEARANCE_AREAS`, `SETTINGS_PLUGINS_AREA` |
+| Plugin contract | `HermesPlugin`, `PluginContext`, `PluginContribution`, `PluginBackdropContribution`, `PluginBackdropData`, `PluginStorage`, `PluginFiles`, `PluginFolder`, `PluginFileEntry`, `PluginFilesResult`, `PluginOs`, `PluginPet`, `PetSayOptions`, `PetMessageTone`, `PluginAppActionId`, `PluginAppActionInfo`, `PluginRunActionResult`, `PLUGIN_APP_ACTIONS`, `PluginRestOptions`, `PluginNativeNotificationInput`, `PluginNotificationAction`, `HermesOpenTarget`, `Contribution` |
+| Area constants | `BACKDROP_AREA`, `PANES_AREA`, `ROUTES_AREA`, `SIDEBAR_NAV_AREA`, `STATUSBAR_AREAS`, `TITLEBAR_AREAS`, `WORKSPACE_PAGE_HEADER_AREA`, `PALETTE_AREA`, `KEYBINDS_AREA`, `THEMES_AREA`, `COMPOSER_AREAS`, `MODEL_MENU_ROW_AREA`, `KANBAN_CARD_AREAS`, `SESSION_ROW_AREAS`, `SIDEBAR_NAV_PREFS_AREA`, `APPEARANCE_AREAS`, `SETTINGS_PLUGINS_AREA` |
 | Area payloads | `PluginSettingsPage`, `PluginSettingsSubpage` (+ `pluginSettingsHref`), `RouteContribution`, `SidebarNavContribution`, `StatusbarItem`, `TitlebarTool`, `PaletteContribution`, `KeybindContribution`, `ComposerMiddleware`, `ComposerAttachmentProvider`, `ComposerContextMenuProvider` (+ `ComposerContextMenuItem`, `ComposerContextMenuContext`, `ComposerContextMenuAction`), `SessionRowSlotContribution`, `KanbanCardBadgeContribution` (+ `KanbanCard`, `KanbanCardBoard`, `KanbanCardBadge`, `KanbanCardBadgeTone`, `KANBAN_CARD_BADGE_HUES`, `KANBAN_CARD_BADGE_LIMITS`), `SidebarNavPrefsContribution` |
 | React / state | `useValue`, `atom`, `computed`, `useQuery`, `useMutation`, `useQueryClient`, `queryClient`, `Contribute`, `WorkspacePageHeaderControl` |
 | Theming | `useTheme`, `requestTheme`, `setAccentOverride`, `$accentOverride`, `retintTheme`, `themeHue`, `DesktopTheme`, `DesktopThemeColors`, plus OKLCH math (`hexToOklch`, `oklchToHex`, `oklchToSrgb255`, `mixOklab`, `maxChroma`, `hueDelta`, `normalizeHex`) and sRGB measures (`contrastRatio` — `number | null`, null for unparseable input — `readableOn`) |

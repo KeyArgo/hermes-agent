@@ -104,6 +104,8 @@ export function ChatSwitchIndicator({ failure, syncing, target }: ChatSwitchIndi
       {(state === 'slow' || state === 'syncing') && profile && (
         <div
           className="pointer-events-none absolute right-3 top-2 flex items-center gap-1.5 rounded-full border border-(--stroke-nous) bg-(--ui-chat-surface-background) px-2 py-0.5 font-mono text-[0.6875rem] text-(--ui-text-secondary) shadow-nous transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none"
+          // Floats over transcript text, so it masks the scene under a backdrop.
+          data-backdrop-opaque=""
           style={tintStyle(color)}
         >
           <GlyphSpinner className="w-3 justify-start text-(--ui-accent)" spinner="braille" />

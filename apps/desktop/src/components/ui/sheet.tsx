@@ -64,6 +64,9 @@ function SheetContent({
             'inset-x-0 bottom-0 h-auto border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
           className
         )}
+        // Portals to <body>, outside the shell that paints the app dim, and it
+        // paints a token the backdrop clears — mask the scene instead.
+        data-backdrop-opaque=""
         data-slot="sheet-content"
         {...props}
       >

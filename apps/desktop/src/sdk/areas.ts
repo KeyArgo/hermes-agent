@@ -13,6 +13,10 @@ export const TITLEBAR_AREAS = { center: 'titleBar.center', left: 'titleBar.left'
  *  main composer and every tile's answer for their own session, so a banner can tell whose
  *  chat it sits above. */
 export { type ComposerSessionInfo, useComposerSession } from '@/app/chat/composer/scope'
+/** One full-window layer behind the app. The latest enabled contribution wins;
+ *  it is click-through, never takes focus, and stops painting on disposal (the
+ *  layer falls back to the newest remaining registration, if any). */
+export { BACKDROP_AREA } from '@/contrib/backdrop'
 /** Per-card labels on Kanban tiles: register a `KANBAN_CARD_AREAS.badges`
  *  data contribution whose `decorate({ id, status, tenant, assignee },
  *  { tenants })` returns `{ label, tone?, tooltip? }` (or a few, or `null`). Core paints

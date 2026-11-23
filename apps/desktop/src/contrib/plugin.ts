@@ -13,6 +13,7 @@
  */
 
 import type { ReadableAtom } from 'nanostores'
+import type { ReactNode } from 'react'
 
 import { pluginRest, type PluginRestOptions, pluginSocket } from '@/hermes'
 import { createPluginI18n, type PluginI18n } from '@/i18n'
@@ -28,6 +29,7 @@ import { dispatchPluginNativeNotification, type PluginNativeNotificationInput } 
 import { $petActive } from '@/store/pet'
 import { clearPetMessages, type PetSayOptions, sayPetMessage } from '@/store/pet-plugin-messages'
 
+import type { PluginBackdropData } from './backdrop'
 import { type GatewayEventListener, onGatewayEvent } from './events'
 import { createPluginFiles, type PluginFiles } from './plugin-files'
 import { createPluginPreview, type PluginPreview } from './plugin-preview'
@@ -49,6 +51,24 @@ export type { PetMessageTone, PetSayOptions } from '@/store/pet-plugin-messages'
 /** A contribution as a plugin author writes it — provenance + id scoping are
  *  the host's job, so those fields are off-limits here. */
 export type PluginContribution = Omit<Contribution, 'source' | 'id'> & { id: string }
+
+export interface PluginBackdropContribution extends Omit<PluginContribution, 'area' | 'data' | 'render'> {
+  area: 'backdrop'
+  data?: PluginBackdropData
+  render: () => ReactNode
+  /** Accepted but not a precedence key: the latest registration wins even over
+   *  a lower `order` (see `contrib/backdrop.ts`). */
+  order?: number
+}
+
+/** What an area expects from a contribution. The backdrop's `data` payload is
+ *  closed and its `render` is required, so authors get both checked at the call
+ *  site; every other area keeps the open shape. See `PluginContext.register`. */
+export type PluginContributionFor<A extends string> = A extends 'backdrop' ? PluginBackdropContribution : PluginContribution
+
+/** A batch entry checked against its own `area`, exactly like a single
+ *  `register` call. */
+type CheckedContribution<C> = C extends { area: infer A extends string } ? PluginContributionFor<A> & { area: A } : never
 
 /** Namespaced JSON persistence (the VS Code `globalState` analog). Keys live
  *  under `hermes.plugin.<id>.` — plugins can't read or clobber each other. */
@@ -115,10 +135,16 @@ export interface PluginFileDialogOptions {
 export interface PluginContext {
   /** The resolved plugin source tag, e.g. `'plugin:cost-meter'`. */
   readonly source: string
-  /** Register one contribution (id namespaced, source stamped). */
-  register: (c: PluginContribution) => () => void
-  /** Register several at once; the returned disposer removes all of them. */
-  registerMany: (cs: PluginContribution[]) => () => void
+  /** Register one contribution (id namespaced, source stamped). A
+   *  `BACKDROP_AREA` contribution is checked as a `PluginBackdropContribution`,
+   *  so its `data: { opacity?, appOpacity? }` and required `render` are typed at
+   *  the call site instead of widening to `unknown`. */
+  register: <A extends string>(c: PluginContributionFor<A> & { area: A }) => () => void
+  /** Register several at once; the returned disposer removes all of them. Each
+   *  entry is checked by its own `area`, exactly like `register`. */
+  registerMany: <const C extends readonly PluginContribution[]>(
+    cs: C & { readonly [K in keyof C]: CheckedContribution<C[K]> }
+  ) => () => void
   /** Add this plugin's page (and optional sub-pages) to Settings ▸ Plugins.
    *  Removed with the plugin on disable/unload. Feature-detect on older hosts:
    *  `ctx.registerSettingsPage?.(...)`. */
@@ -388,7 +414,7 @@ export function createPluginContext(
   return {
     source,
     register: c => track(registry.register(scope(c))),
-    registerMany: cs => track(registry.registerMany(cs.map(scope))),
+    registerMany: cs => track(registry.registerMany(cs.map(c => scope(c as PluginContribution)))),
     registerSettingsPage: page => track(registry.register(scope(settingsPageContribution(page)))),
     onDispose: fn => void track(fn),
     onEvent: (type, listener) => track(onGatewayEvent(type, listener)),

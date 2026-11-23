@@ -43,4 +43,16 @@ describe('stranded resume overlay escape (#106217)', () => {
     expect(onRetryResume).toHaveBeenCalledWith('session-1')
     expect(requestFreshSession).not.toHaveBeenCalled()
   })
+
+  it('stays solid over the thread under a plugin backdrop', () => {
+    const { container } = render(<ResumeExhaustedOverlay onRetryResume={vi.fn()} sessionId="session-1" />)
+
+    // The overlay masks the thread, and a backdrop clears the chat surface
+    // token — so it opts into the opaque fill for backdrops only.
+    const overlay = container.firstElementChild
+
+    expect(overlay?.hasAttribute('data-backdrop-opaque')).toBe(true)
+    // Window glass on its own is untouched.
+    expect(overlay?.hasAttribute('data-glass-opaque')).toBe(false)
+  })
 })
