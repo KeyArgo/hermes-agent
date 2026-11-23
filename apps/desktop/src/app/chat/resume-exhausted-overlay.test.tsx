@@ -43,4 +43,15 @@ describe('stranded resume overlay escape (#106217)', () => {
     expect(onRetryResume).toHaveBeenCalledWith('session-1')
     expect(requestFreshSession).not.toHaveBeenCalled()
   })
+
+  it('stays solid over the thread when the chat surface token is transparent', () => {
+    const { container } = render(<ResumeExhaustedOverlay onRetryResume={vi.fn()} sessionId="session-1" />)
+
+    // Under a plugin backdrop (or window glass) --ui-chat-surface-background
+    // is transparent at :root. The overlay masks the thread, so it must scope
+    // the token back to solid at the call site — a see-through mask reads as
+    // the stranded thread bleeding through the fallback. Contract:
+    // `[data-glass-opaque]` in styles.css.
+    expect(container.firstElementChild?.hasAttribute('data-glass-opaque')).toBe(true)
+  })
 })

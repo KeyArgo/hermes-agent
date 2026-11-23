@@ -1093,6 +1093,8 @@ export const deOverrides = {
       fileBrowserTitle: 'Dateibrowser',
       fileBrowserDesc:
         'Zeigt den Dateibrowser neben dem Chat, wenn ein Arbeitsbereich geöffnet ist. Der Schalter in der Titelleiste ändert diese Einstellung ebenfalls.',
+      pluginBackdropsTitle: 'Plugin-Hintergründe erlauben',
+      pluginBackdropsDesc: 'Plugins dürfen ein Bild hinter der App anzeigen.',
       vibeHeartsTitle: 'Vibe-Herzen',
       vibeHeartsDesc:
         'Schwebende Herzen, wenn Sie danke, ilu, guter Bot sagen oder ein Herz senden. Unabhängig von den Nachrichten-Reaktionen oben.',

@@ -8,6 +8,7 @@ export type {
   PetSayOptions,
   PluginAppActionId,
   PluginAppActionInfo,
+  PluginBackdropContribution,
   PluginContext,
   PluginContribution,
   PluginFileEntry,

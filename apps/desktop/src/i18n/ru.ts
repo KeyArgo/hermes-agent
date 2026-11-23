@@ -486,6 +486,8 @@ export const ruOverrides = {
       system: { label: 'Системная', description: 'Следовать настройкам ОС' }
     },
     appearance: {
+      pluginBackdropsTitle: 'Разрешить фоны плагинов',
+      pluginBackdropsDesc: 'Разрешить плагинам показывать изображение за приложением.',
       chatTextScaleTitle: 'Размер текста чата',
       chatTextScaleDesc:
         'Масштабирует текст беседы и поле ввода относительно масштаба интерфейса. Размер боковых панелей и элементов управления не меняется.',

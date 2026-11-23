@@ -1098,6 +1098,8 @@ export const frOverrides = {
       fileBrowserTitle: 'Navigateur de fichiers',
       fileBrowserDesc:
         "Affiche le navigateur de fichiers à côté du chat lorsqu'un espace de travail est ouvert. Le bouton de la barre de titre modifie aussi ce réglage.",
+      pluginBackdropsTitle: 'Autoriser les arrière-plans des plugins',
+      pluginBackdropsDesc: 'Autoriser les plugins à afficher un visuel derrière l’application.',
       vibeHeartsTitle: "Cœurs d'ambiance",
       vibeHeartsDesc:
         "Des cœurs flottants apparaissent lorsque vous dites merci, « je t'aime », « good bot » ou envoyez un cœur. Cette option est indépendante des réactions aux messages ci-dessus.",

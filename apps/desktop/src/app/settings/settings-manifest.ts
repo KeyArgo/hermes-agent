@@ -70,6 +70,7 @@ export const SETTINGS_MANIFEST = {
     ),
     tips: appearanceSetting('general', ['tips', 'hints', 'coach marks', 'onboarding', 'help'], 'tips'),
     tours: appearanceSetting('general', ['tour', 'walkthrough', 'guide', 'onboarding', 'help'], 'tours'),
+    pluginBackdrops: appearanceSetting('theme', ['plugin', 'background', 'backdrop', 'wallpaper'], 'pluginBackdrops'),
     theme: appearanceSetting('theme', ['color mode', 'skin', 'light', 'dark'], 'theme'),
     uiScale: appearanceSetting('typography', ['zoom', 'size'], 'uiScale'),
     chatTextScale: appearanceSetting('typography', ['chat', 'text', 'font', 'size', 'scale', 'zoom'], 'chatTextScale'),

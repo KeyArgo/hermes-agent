@@ -89,4 +89,29 @@ describe('ExpandableBlock', () => {
     expect(block.hasAttribute('data-horizontal-overflow')).toBe(false)
     expect(block.parentElement?.querySelector('[data-slot="expandable-horizontal-fade"]')).toBeNull()
   })
+
+  it('keeps the overflow fades solid when the chat surface token is transparent', () => {
+    window.document.documentElement.dataset.hermesDesktopHost = 'browser'
+    vi.stubGlobal('ResizeObserver', TestResizeObserver)
+
+    render(
+      <ExpandableBlock>
+        <pre data-testid="content">{'line\n'.repeat(20)}</pre>
+      </ExpandableBlock>
+    )
+
+    // Under a plugin backdrop (or window glass) --ui-chat-surface-background
+    // is transparent at :root, and a fade from transparent is no overflow cue
+    // at all. Both fades mask the block's own content, so they scope the token
+    // back to solid at the call site. Contract: `[data-glass-opaque]` in
+    // styles.css.
+    const horizontal = screen
+      .getByTestId('content')
+      .parentElement?.parentElement?.querySelector('[data-slot="expandable-horizontal-fade"]')
+
+    const vertical = screen.getByRole('button', { name: 'Expand' }).parentElement
+
+    expect(horizontal?.hasAttribute('data-glass-opaque')).toBe(true)
+    expect(vertical?.hasAttribute('data-glass-opaque')).toBe(true)
+  })
 })

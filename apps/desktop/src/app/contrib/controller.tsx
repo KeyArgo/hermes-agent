@@ -5,6 +5,7 @@ import type { CSSProperties, ReactElement, PointerEvent as ReactPointerEvent } f
 import { SessionDraftTitle } from '@/app/chat/session-draft-title'
 import { SessionStatusDot } from '@/app/chat/session-status-dot'
 import { PALETTE_AREA, type PaletteContribution, paletteToggle } from '@/app/command-palette/contrib'
+import { BackdropLayer } from '@/app/contrib/backdrop-layer'
 import { type StatusbarItem } from '@/app/shell/statusbar-controls'
 import { InlinePreviewDirective } from '@/components/assistant-ui/inline-preview-directive'
 import { IdleMount } from '@/components/idle-mount'
@@ -819,6 +820,7 @@ export function ContribController() {
       style={{ '--sidebar-width': '100%' } as CSSProperties}
     >
       <ContribWiring>
+        <BackdropLayer />
         <AppContextMenu />
         {/* App-owned answer to a plugin's ctx.preview.executeJavaScript. Plugins
             run in every window kind, so each shell mounts it. */}
